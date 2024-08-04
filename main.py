@@ -1,4 +1,3 @@
-import json
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
@@ -58,16 +57,16 @@ def scrape_player_data(player, url):
     for row in rows[:5]:  # Get the first 5 rows
         cols = row.find_all("td")
         if len(cols) >= 12:
-            col1_value = cols[5].text
-            col2_value = cols[7].text
-            col3_value = cols[12].text
+            total_atbats = cols[5].text
+            total_hits = cols[7].text
+            total_walks = cols[12].text
 
-            if col1_value:
-                at_bats += int(col1_value)
-            if col2_value:
-                hits += int(col2_value)
-            if col3_value:
-                walks += int(col3_value)
+            if total_atbats:
+                at_bats += int(total_atbats)
+            if total_hits:
+                hits += int(total_hits)
+            if total_walks:
+                walks += int(total_walks)
 
     return {"Player": player, "At Bats": at_bats, "Hits": hits, "Walks": walks}
 
@@ -108,42 +107,4 @@ def probable_hitters(summary_data, n=5):
 
 
 if __name__ == "__main__":
-    print(probable_hitters(n=8))
-
-
-# # Compiled player data
-# summary_data = []
-
-# for player, url in players.items():
-#     player_data = scrape_player_data(player, url)
-#     if player_data:
-#         player_data["binomial_probability"] = binomial_probability(
-#             player_data["At Bats"], player_data["Hits"], player_data["Walks"]
-#         )
-#         summary_data.append(player_data)
-
-# # Sort based on probability in descending order
-# summary_data.sort(key=lambda x: x["binomial_probability"], reverse=True)
-
-# # Print the top n players based on highest probability
-# n = 10
-# top_players = summary_data[:n]
-
-
-# # Create and populate the table
-# table = PrettyTable()
-# table.field_names = ["Player", "AB", "H", "BB", "Prob %"]
-
-# for data in top_players:
-#     table.add_row(
-#         [
-#             data["Player"],
-#             data["At Bats"],
-#             data["Hits"],
-#             data["Walks"],
-#             f"{data["binomial_probability"]:.1%}",
-#         ]
-#     )
-
-# # Display the output
-# print(table)
+    probable_hitters(compile_player_data(), n=8)
