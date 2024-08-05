@@ -53,6 +53,7 @@ def scrape_player_data(player, url):
     at_bats = 0
     hits = 0
     walks = 0
+    strikeouts = 0
 
     for row in rows[:5]:  # Get the first 5 rows
         cols = row.find_all("td")
@@ -60,6 +61,7 @@ def scrape_player_data(player, url):
             total_atbats = cols[5].text
             total_hits = cols[7].text
             total_walks = cols[12].text
+            total_strikeouts = cols[13].text
 
             if total_atbats:
                 at_bats += int(total_atbats)
@@ -67,8 +69,10 @@ def scrape_player_data(player, url):
                 hits += int(total_hits)
             if total_walks:
                 walks += int(total_walks)
+            if total_strikeouts:
+                strikeouts += int(total_strikeouts)
 
-    return {"Player": player, "At Bats": at_bats, "Hits": hits, "Walks": walks}
+    return {"Player": player, "At Bats": at_bats, "Hits": hits, "Walks": walks, "Strikeouts": strikeouts}
 
 
 def compile_player_data(players=hitters):
@@ -94,12 +98,12 @@ def probable_hitters(summary_data, n=5):
 
     # Create and populate the table
     table = PrettyTable()
-    table.field_names = ["Player", "AB", "H", "BB", "Prob %"]
+    table.field_names = ["Player", "AB", "H", "BB", "K", "Prob %"]
 
     for data in top_players:
         probability = f"{data["probability"]:.1%}"
         table.add_row(
-            [data["Player"], data["At Bats"], data["Hits"], data["Walks"], probability]
+            [data["Player"], data["At Bats"], data["Hits"], data["Walks"], data["Strikeouts"], probability]
         )
 
     # Display the output
@@ -107,4 +111,4 @@ def probable_hitters(summary_data, n=5):
 
 
 if __name__ == "__main__":
-    probable_hitters(compile_player_data(), n=8)
+    probable_hitters(compile_player_data(), n=7)
