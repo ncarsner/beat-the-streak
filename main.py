@@ -7,6 +7,62 @@ import random
 
 from players import hitters
 
+selected_hitters = [
+    "Jonathan India",
+    "Elly De La Cruz",
+    "Spencer Steer",
+    "TJ Friedl",
+    "Xavier Edwards",
+    "Jake Burger",
+    "Jonah Bride",
+    "Otto Lopez",
+    "Corbin Carroll",
+    "Ketel Marte",
+    "Tyler Freeman",
+    "Lane Thomas",
+    "Jose Ramirez",
+    "Joc Pederson",
+    "Josh Naylor",
+    "Tyler Fitzgerald",
+    "Heliot Ramos",
+    "LaMonte Wade Jr",
+    "CJ Abrams",
+    "Juan Yepez",
+    "Colton Cowser",
+    "Anthony Santander",
+    "Gunnar Henderson",
+    "George Springer",
+    "Joey Loperfido",
+    "Vladimir Guerrero Jr",
+    "Spencer Horwitz",
+    "Jorge Soler",
+    "Austin Riley",
+    "Marcell Ozuna",
+    "Yandy Diaz",
+    "Brandon Lowe",
+    "Masyn Winn",
+    "Tommy Pham",
+    "Christopher Morel",
+    "Carlos Santana",
+    "Royce Lewis",
+    "Manuel Margot",
+    "Jose Altuve",
+    "Alex Bregman",
+    "Yordan Alvarez",
+    "Josh Smith",
+    "Corey Seager",
+    "Marcus Semien",
+    "Josh Jung",
+    "Charlie Blackmon",
+    "Francisco Lindor",
+    "Brandon Nimmo",
+    "Jarren Duran",
+    "Bobby Witt Jr",
+]
+
+# Subset of hitters based on selected in above list
+hitters = {key: hitters[key] for key in selected_hitters if key in hitters}
+# print(hitters)
 
 # base website
 site_base = "https://www.baseball-reference.com/players/"
@@ -72,7 +128,13 @@ def scrape_player_data(player, url):
             if total_strikeouts:
                 strikeouts += int(total_strikeouts)
 
-    return {"Player": player, "At Bats": at_bats, "Hits": hits, "Walks": walks, "Strikeouts": strikeouts}
+    return {
+        "Player": player,
+        "At Bats": at_bats,
+        "Hits": hits,
+        "Walks": walks,
+        "Strikeouts": strikeouts,
+    }
 
 
 def compile_player_data(players=hitters):
@@ -93,17 +155,44 @@ def probable_hitters(summary_data, n=5):
     # Sort summary data based on descending probability
     summary_data.sort(key=lambda x: x["probability"], reverse=True)
 
-    # Print the top n players based on highest probability
+    # Top n players based on highest probability
     top_players = summary_data[:n]
+
+    # Lowest n players based on lowest probability
+    low_players = summary_data[-n:]
 
     # Create and populate the table
     table = PrettyTable()
+    table.title = datetime.today().strftime("%B %#d, %Y")
     table.field_names = ["Player", "AB", "H", "BB", "K", "Prob %"]
 
     for data in top_players:
         probability = f"{data["probability"]:.1%}"
         table.add_row(
-            [data["Player"], data["At Bats"], data["Hits"], data["Walks"], data["Strikeouts"], probability]
+            [
+                data["Player"],
+                data["At Bats"],
+                data["Hits"],
+                data["Walks"],
+                data["Strikeouts"],
+                probability,
+            ]
+        )
+
+    # Separator row
+    table.add_row(["---"] * 6)
+
+    for data in low_players:
+        probability = f"{data["probability"]:.1%}"
+        table.add_row(
+            [
+                data["Player"],
+                data["At Bats"],
+                data["Hits"],
+                data["Walks"],
+                data["Strikeouts"],
+                probability,
+            ]
         )
 
     # Display the output
@@ -111,4 +200,4 @@ def probable_hitters(summary_data, n=5):
 
 
 if __name__ == "__main__":
-    probable_hitters(compile_player_data(), n=7)
+    probable_hitters(compile_player_data(), n=6)
