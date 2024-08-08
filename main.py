@@ -4,74 +4,65 @@ from datetime import datetime, timedelta
 from prettytable import PrettyTable
 from time import sleep
 import random
+import configparser
 
 from players import hitters
 
-selected_hitters = [
+
+# Function to load config
+def load_config(file_path="config.ini"):
+    config = configparser.ConfigParser()
+    config.read(file_path)
+    return config
+
+
+selected_hitters = [  # narrow hitters
+    "Luis Arraez",
+    "Jurickson Profar",
+    "Xander Bogaerts",
+    "Manny Machado",
     "Jonathan India",
     "Elly De La Cruz",
-    "Spencer Steer",
+    "Tyler Stephenson",
     "TJ Friedl",
+    "Ty France",
+    "Jeimer Candelario",
     "Xavier Edwards",
     "Jake Burger",
     "Jonah Bride",
-    "Otto Lopez",
-    "Corbin Carroll",
-    "Ketel Marte",
-    "Tyler Freeman",
-    "Lane Thomas",
-    "Jose Ramirez",
-    "Joc Pederson",
-    "Josh Naylor",
-    "Tyler Fitzgerald",
-    "Heliot Ramos",
     "LaMonte Wade Jr",
+    "Heliot Ramos",
+    "Michael Conforto",
     "CJ Abrams",
     "Juan Yepez",
-    "Colton Cowser",
-    "Anthony Santander",
-    "Gunnar Henderson",
+    "Alex Call",
     "George Springer",
-    "Joey Loperfido",
     "Vladimir Guerrero Jr",
-    "Spencer Horwitz",
+    "Ernie Clement",
+    "Rhys Hoskins",
+    "Jackson Chourio",
     "Jorge Soler",
     "Austin Riley",
     "Marcell Ozuna",
-    "Yandy Diaz",
-    "Brandon Lowe",
+    "Matt Olson",
     "Masyn Winn",
-    "Tommy Pham",
-    "Christopher Morel",
-    "Carlos Santana",
-    "Royce Lewis",
-    "Manuel Margot",
-    "Jose Altuve",
-    "Alex Bregman",
-    "Yordan Alvarez",
-    "Josh Smith",
-    "Corey Seager",
-    "Marcus Semien",
-    "Josh Jung",
-    "Charlie Blackmon",
-    "Francisco Lindor",
-    "Brandon Nimmo",
-    "Jarren Duran",
     "Bobby Witt Jr",
+    "Vinnie Pasquantino",
+    "Salvador Perez",
+    "Charlie Blackmon",
+    "Ezequiel Tovar",
 ]
 
-# Subset of hitters based on selected in above list
-hitters = {key: hitters[key] for key in selected_hitters if key in hitters}
-# print(hitters)
+# Subset of hitters filters from selected_hitters list
+# hitters = {key: hitters[key] for key in selected_hitters if key in hitters}
 
 # base website
 site_base = "https://www.baseball-reference.com/players/"
 
 
-# Headers to include in the requests
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
-}
+# Load config and set headers
+config = load_config()
+headers = {"User-Agent": config["browser"]["user_agent"]}
 
 
 def is_within_past_week(date_str):
@@ -96,7 +87,6 @@ def scrape_player_data(player, url):
     # Find the date in the specified XPath location
     date_elem = soup.select_one("#div_last5 > table > tbody > tr:nth-of-type(5) > th")
     if date_elem:
-        # print(date_elem, date_elem.text.strip()) # DEBUG
         date_str = date_elem.text.strip()
         if not is_within_past_week(date_str):
             return None  # Ignore if span is older than one week
@@ -111,7 +101,7 @@ def scrape_player_data(player, url):
     walks = 0
     strikeouts = 0
 
-    for row in rows[:5]:  # Get the first 5 rows
+    for row in rows:
         cols = row.find_all("td")
         if len(cols) >= 12:
             total_atbats = cols[5].text
@@ -137,11 +127,12 @@ def scrape_player_data(player, url):
     }
 
 
-def compile_player_data(players=hitters):
+def compile_player_data(players):
     summary_data = []
     for player, url in players.items():
         player_data = scrape_player_data(player, url)
-        if player_data:
+        # Validates data returned, and player's walks are equal to or greater than strikeouts
+        if player_data and player_data["Walks"] >= player_data["Strikeouts"]:
             player_data["probability"] = binomial_probability(
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
@@ -155,10 +146,10 @@ def probable_hitters(summary_data, n=5):
     # Sort summary data based on descending probability
     summary_data.sort(key=lambda x: x["probability"], reverse=True)
 
-    # Top n players based on highest probability
+    # n highest probability players
     top_players = summary_data[:n]
 
-    # Lowest n players based on lowest probability
+    # n lowest probability players
     low_players = summary_data[-n:]
 
     # Create and populate the table
@@ -200,4 +191,4 @@ def probable_hitters(summary_data, n=5):
 
 
 if __name__ == "__main__":
-    probable_hitters(compile_player_data(), n=6)
+    probable_hitters(compile_player_data(players=hitters), n=5)

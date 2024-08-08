@@ -2,7 +2,7 @@
 
 
 ## Description
-This is a Python-based tool that hitter data from `Baseball-Reference.com` player sites and compiles a metric using binomial distribution probability analysis. The script compiles and evaluates the top `n` candidates for selection on a given day based on performance over their previous five (5) games played.
+This is a Python-based tool that compiles hitter data from `Baseball-Reference.com` player sites and calculates a metric using binomial distribution probability based on batting average and plate appearances over the previous week. The script evaluates the top and bottom `n` candidates for the current date based on performance over their previous five (5) games played.
 
 ## Installation
 To set up Beat the Streak, follow these steps:
