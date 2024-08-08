@@ -1,12 +1,19 @@
 import pytest
 import requests
 from datetime import datetime, timedelta
+import configparser
 from main import is_within_past_week, binomial_probability, scrape_player_data
 
-# Sample headers to include in the requests
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
-}
+
+# Function to load config
+def load_config(file_path="config.ini"):
+    config = configparser.ConfigParser()
+    config.read(file_path)
+    return config
+
+
+config = load_config()
+headers = {"User-Agent": config["browser"]["user_agent"]}
 
 
 def test_is_within_past_week():
