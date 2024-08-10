@@ -54,7 +54,7 @@ selected_hitters = [  # narrow hitters
 ]
 
 # Subset of hitters filters from selected_hitters list
-# hitters = {key: hitters[key] for key in selected_hitters if key in hitters}
+selected_hitters = {key: hitters[key] for key in selected_hitters if key in hitters}
 
 # base website
 site_base = "https://www.baseball-reference.com/players/"
@@ -155,33 +155,29 @@ def probable_hitters(summary_data, n=5):
     # Create and populate the table
     table = PrettyTable()
     table.title = datetime.today().strftime("%B %#d, %Y")
-    table.field_names = ["Player", "AB", "H", "BB", "K", "Prob %"]
+    table.field_names = ["Player", "H-AB", "BB/K", "Prob %"]
 
     for data in top_players:
         probability = f"{data["probability"]:.1%}"
         table.add_row(
             [
                 data["Player"],
-                data["At Bats"],
-                data["Hits"],
-                data["Walks"],
-                data["Strikeouts"],
+                f"{data["Hits"]}-{data["At Bats"]}",
+                f"{data["Walks"]}/{data["Strikeouts"]}",
                 probability,
             ]
         )
 
     # Separator row
-    table.add_row(["---"] * 6)
+    table.add_row(["---"] * len(table.field_names))
 
     for data in low_players:
         probability = f"{data["probability"]:.1%}"
         table.add_row(
             [
                 data["Player"],
-                data["At Bats"],
-                data["Hits"],
-                data["Walks"],
-                data["Strikeouts"],
+                f"{data["Hits"]}-{data["At Bats"]}",
+                f"{data["Walks"]}/{data["Strikeouts"]}",
                 probability,
             ]
         )
