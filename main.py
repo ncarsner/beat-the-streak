@@ -81,7 +81,7 @@ def binomial_probability(ab, h, bb):
 # Scrape and summarize data for each player
 def scrape_player_data(player, url):
     full_url = site_base + url
-    response = requests.get(full_url, headers=headers)
+    response = requests.get(full_url, headers=None)
     soup = BeautifulSoup(response.content, "html.parser")
 
     # Find the date in the specified XPath location
@@ -131,8 +131,8 @@ def compile_player_data(players):
     summary_data = []
     for player, url in players.items():
         player_data = scrape_player_data(player, url)
-        # Validates data returned, and player's walks are equal to or greater than strikeouts
-        if player_data and player_data["Walks"] >= player_data["Strikeouts"]:
+        # Validates data returned, (and, optionally) if player's walks >= strikeouts
+        if player_data: # and player_data["Walks"] >= player_data["Strikeouts"]:
             player_data["probability"] = binomial_probability(
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
@@ -147,7 +147,7 @@ def probable_hitters(summary_data, n=5):
     summary_data.sort(key=lambda x: x["probability"], reverse=True)
 
     # n highest probability players
-    top_players = summary_data[:n]
+    top_players = summary_data[:n*2]
 
     # n lowest probability players
     low_players = summary_data[-n:]
