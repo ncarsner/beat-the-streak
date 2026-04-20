@@ -1,5 +1,5 @@
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 from datetime import datetime, timedelta
 from prettytable import PrettyTable
 from time import sleep
@@ -7,6 +7,13 @@ import random
 import configparser
 
 from players import hitters
+
+
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
 
 
 # Function to load config
@@ -60,9 +67,10 @@ selected_hitters = {key: hitters[key] for key in selected_hitters if key in hitt
 site_base = "https://www.baseball-reference.com/players/"
 
 
-# Load config and set headers
+# Load config and set headers; fall back to a default User-Agent if config.ini is absent
 config = load_config()
-headers = {"User-Agent": config["browser"]["user_agent"]}
+user_agent = config.get("browser", "user_agent", fallback=DEFAULT_USER_AGENT)
+headers = {"User-Agent": user_agent}
 
 
 def is_within_past_week(date_str):
@@ -72,29 +80,62 @@ def is_within_past_week(date_str):
 
 
 def binomial_probability(ab, h, bb):
+    if ab == 0:
+        return 0.0
     pa = ab + bb
     exp = pa / 5
     avg = h / ab
     return 1 - (1 - avg) ** exp
 
 
+def _find_last5_div(soup):
+    """Return the div#div_last5 element, searching inside HTML comments if needed.
+
+    Baseball Reference wraps secondary tables in HTML comments for lazy-loading;
+    BeautifulSoup skips comment content by default so we search comments explicitly.
+    """
+    div = soup.find("div", id="div_last5")
+    if div:
+        return div
+    for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
+        comment_soup = BeautifulSoup(comment, "html.parser")
+        div = comment_soup.find("div", id="div_last5")
+        if div:
+            return div
+    return None
+
+
 # Scrape and summarize data for each player
 def scrape_player_data(player, url):
     full_url = site_base + url
-    response = requests.get(full_url, headers=None)
+    try:
+        response = requests.get(full_url, headers=headers)
+        response.raise_for_status()
+    except requests.RequestException:
+        return None
     soup = BeautifulSoup(response.content, "html.parser")
 
-    # Find the date in the specified XPath location
-    date_elem = soup.select_one("#div_last5 > table > tbody > tr:nth-of-type(5) > th")
-    if date_elem:
-        date_str = date_elem.text.strip()
-        if not is_within_past_week(date_str):
-            return None  # Ignore if span is older than one week
-    else:
-        return None  # Ignore if date element is not found
+    last5_div = _find_last5_div(soup)
+    if not last5_div:
+        return None
 
-    # Find the table rows within the specified div
-    rows = soup.select("#div_last5 > table > tbody > tr")
+    rows = last5_div.select("table > tbody > tr")
+    if not rows:
+        return None
+
+    # Use the date from the last game row (most recent)
+    last_date_str = None
+    for row in reversed(rows):
+        date_elem = row.find("th", {"data-stat": "date_game"})
+        if date_elem:
+            raw = date_elem.text.strip()
+            # Doubleheader dates appear as "YYYY-MM-DD (1)" — strip the suffix
+            last_date_str = raw.split("(")[0].strip()
+            if last_date_str:
+                break
+
+    if not last_date_str or not is_within_past_week(last_date_str):
+        return None  # Skip players whose last game was more than a week ago
 
     at_bats = 0
     hits = 0
@@ -102,21 +143,18 @@ def scrape_player_data(player, url):
     strikeouts = 0
 
     for row in rows:
-        cols = row.find_all("td")
-        if len(cols) >= 12:
-            total_atbats = cols[5].text
-            total_hits = cols[7].text
-            total_walks = cols[12].text
-            total_strikeouts = cols[13].text
+        def _int(cell):
+            if cell and cell.text.strip():
+                try:
+                    return int(cell.text.strip())
+                except ValueError:
+                    pass
+            return 0
 
-            if total_atbats:
-                at_bats += int(total_atbats)
-            if total_hits:
-                hits += int(total_hits)
-            if total_walks:
-                walks += int(total_walks)
-            if total_strikeouts:
-                strikeouts += int(total_strikeouts)
+        at_bats += _int(row.find("td", {"data-stat": "AB"}))
+        hits += _int(row.find("td", {"data-stat": "H"}))
+        walks += _int(row.find("td", {"data-stat": "BB"}))
+        strikeouts += _int(row.find("td", {"data-stat": "SO"}))
 
     return {
         "Player": player,
@@ -131,8 +169,9 @@ def compile_player_data(players):
     summary_data = []
     for player, url in players.items():
         player_data = scrape_player_data(player, url)
-        # Validates data returned, (and, optionally) if player's walks >= strikeouts
-        if player_data: # and player_data["Walks"] >= player_data["Strikeouts"]:
+        # Validates data returned and that at-bats are non-zero before computing probability
+        # (and, optionally) if player's walks >= strikeouts
+        if player_data and player_data["At Bats"] > 0:  # and player_data["Walks"] >= player_data["Strikeouts"]:
             player_data["probability"] = binomial_probability(
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
@@ -154,16 +193,17 @@ def probable_hitters(summary_data, n=5):
 
     # Create and populate the table
     table = PrettyTable()
-    table.title = datetime.today().strftime("%B %#d, %Y")
+    today = datetime.today()
+    table.title = f"{today.strftime('%B')} {today.day}, {today.year}"
     table.field_names = ["Player", "H-AB", "BB/K", "Prob %"]
 
     for data in top_players:
-        probability = f"{data["probability"]:.1%}"
+        probability = f"{data['probability']:.1%}"
         table.add_row(
             [
                 data["Player"],
-                f"{data["Hits"]}-{data["At Bats"]}",
-                f"{data["Walks"]}/{data["Strikeouts"]}",
+                f"{data['Hits']}-{data['At Bats']}",
+                f"{data['Walks']}/{data['Strikeouts']}",
                 probability,
             ]
         )
@@ -172,12 +212,12 @@ def probable_hitters(summary_data, n=5):
     table.add_row(["---"] * len(table.field_names))
 
     for data in low_players:
-        probability = f"{data["probability"]:.1%}"
+        probability = f"{data['probability']:.1%}"
         table.add_row(
             [
                 data["Player"],
-                f"{data["Hits"]}-{data["At Bats"]}",
-                f"{data["Walks"]}/{data["Strikeouts"]}",
+                f"{data['Hits']}-{data['At Bats']}",
+                f"{data['Walks']}/{data['Strikeouts']}",
                 probability,
             ]
         )

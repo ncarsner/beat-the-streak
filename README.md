@@ -1,34 +1,132 @@
-# Beat the Streak analysis tool 
-
+# Beat the Streak — Analysis Tool
 
 ## Description
-This is a Python-based tool that compiles hitter data from `Baseball-Reference.com` player sites and calculates a metric using binomial distribution probability based on batting average and plate appearances over the previous week. The script evaluates the top and bottom `n` candidates for the current date based on performance over their previous five (5) games played.
+
+Beat the Streak is a Python command-line tool that scrapes per-game batting statistics from [Baseball-Reference.com](https://www.baseball-reference.com) and ranks hitters by the probability that they will record at least one hit in their next game.
+
+For each player in the configured list the tool:
+
+1. Fetches the player's **last 5 games** played within the past week from the `#div_last5` section of their Baseball-Reference profile page.
+2. Aggregates at-bats (AB), hits (H), walks (BB), and strikeouts (SO) across those games.
+3. Computes a **binomial hit-probability** using the player's recent batting average and plate-appearance rate.
+4. Outputs a ranked table showing the top `n` candidates (and the bottom `n` as a contrasting reference).
+
+The metric is intentionally lightweight and designed to complement — not replace — manual lineup review.
+
+---
 
 ## Installation
-To set up Beat the Streak, follow these steps:
 
-1. Make sure you have Python installed. You can download it from [python.org](https://www.python.org/downloads/).
+1. Ensure **Python 3.9+** is installed.  Get it from [python.org](https://www.python.org/downloads/).
 
 2. Clone the repository:
-`git clone https://github.com/ncarsner/beat-the-streak.git`
+   ```bash
+   git clone https://github.com/ncarsner/beat-the-streak.git
+   cd beat-the-streak
+   ```
 
-3. Navigate to the project directory:
-`cd beat-the-streak`
+3. Create and activate a virtual environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate   # Windows: .venv\Scripts\activate
+   ```
 
-4. Create a virtual environment, i.e `python3 -m venv <venv>`
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-5. Install the required dependencies by running: `pip install -r requirements.txt`
+5. (Optional) Copy the config template and customise the User-Agent header used for HTTP requests:
+   ```bash
+   cp config.ini.example config.ini
+   # Edit config.ini with your preferred User-Agent string
+   ```
+   If `config.ini` is absent the tool falls back to a sensible default User-Agent automatically.
 
+---
 
 ## Usage
-To execute the game, run: `python main.py`
 
-## Development Notes
-This tool is designed with the intent to scale execution in conjunction with scheduled games and published lineups so as not to abuse source data provider.
+Run against the full player list:
+```bash
+python main.py
+```
+
+The `selected_hitters` dict near the top of `main.py` lets you narrow the scan to a specific subset of players without editing `players.py`.
+
+### Output format
+
+```
++-------------------------------------------+
+|           April 20, 2025                  |
++------------------+-------+------+---------+
+| Player           | H-AB  | BB/K | Prob %  |
++------------------+-------+------+---------+
+| Steven Kwan      | 7-18  | 3/2  | 84.3%   |
+| Luis Arraez      | 6-17  | 4/1  | 82.1%   |
+| ...              | ...   | ...  | ...     |
++------------------+-------+------+---------+
+| ---              | ---   | ---  | ---     |
++------------------+-------+------+---------+
+| Jake Burger      | 1-16  | 0/7  | 28.4%   |
+| ...              | ...   | ...  | ...     |
++------------------+-------+------+---------+
+```
+
+The separator row divides the **top `n×2`** players (best candidates) from the **bottom `n`** players (worst recent performers).
+
+---
+
+## Player list
+
+`players.py` contains the `hitters` dictionary mapping player names to their Baseball-Reference URL slugs.  Add or remove players here to customise the pool.  The `selected_hitters` list in `main.py` provides a further narrowing filter.
+
+---
+
+## How the probability is calculated
+
+```
+PA  = AB + BB
+exp = PA / 5          # estimated plate appearances per game
+avg = H / AB          # recent batting average
+P   = 1 − (1 − avg)^exp
+```
+
+`P` is the probability of recording **at least one hit** in a hypothetical game with `exp` plate appearances, given the player's recent average.  Players with zero at-bats in the sample window are excluded.
+
+---
+
+## Running tests
+
+```bash
+pytest test_suite.py -v
+```
+
+---
+
+## Changes in this update
+
+The following bugs were identified and fixed after the tool stopped returning data:
+
+| # | Issue | Fix |
+|---|-------|-----|
+| 1 | **Missing `config.ini` caused an immediate `KeyError` crash** — the file is `.gitignore`d but was required at import time | Made config optional; falls back to a bundled default User-Agent |
+| 2 | **`headers=None` passed to `requests.get`** — HTTP headers were loaded from config but never forwarded, causing Baseball-Reference to reject requests | Passed the loaded `headers` dict to every request |
+| 3 | **Baseball-Reference wraps secondary tables in HTML comments** for lazy-loading — `BeautifulSoup` skips comment content by default, so `#div_last5` was never found | Added `_find_last5_div()` which searches inside `Comment` nodes as a fallback |
+| 4 | **Fragile positional column indices** (`cols[5]`, `cols[7]`, etc.) broke silently whenever Baseball-Reference reorganised their table columns | Replaced with `data-stat` attribute lookups (`AB`, `H`, `BB`, `SO`) which are stable across layout changes |
+| 5 | **Date detection relied on the hardcoded 5th-row CSS selector** — failed if the player had played fewer than 5 games or the table structure changed | Now iterates rows in reverse and uses `th[data-stat="date_game"]` to find the most-recent game date; handles doubleheader date suffixes |
+| 6 | **`ZeroDivisionError`** when a player had zero at-bats in the sample window | Added an `ab == 0` guard in `binomial_probability` and an `At Bats > 0` check in `compile_player_data` |
+| 7 | **Windows-only `%#d` strftime format** in `probable_hitters` raised `ValueError` on Linux/macOS | Replaced with `today.day` integer formatting |
+| 8 | **Nested f-string quoting** (`f"{data["key"]}"`) required Python 3.12+ | Changed inner keys to single-quoted (`f"{data['key']}"`) for broad compatibility |
+| 9 | **Test suite had multiple failures** — wrong `config.ini` dependency at import, stale 2024 date in mock, incorrect column counts, extra `headers` kwarg, wrong expected values for `binomial_probability` | Rewrote tests to be self-contained, use a dynamic recent date, and match the current formula |
+
+---
 
 ## Contributing
-Contributions to Beat the Streak are welcome.<br>
-Please ensure to update tests as appropriate.
+
+Contributions are welcome.  Please update `test_suite.py` as appropriate when adding features.
 
 ## License
+
 [MIT](https://choosealicense.com/licenses/mit/)
+
