@@ -15,6 +15,14 @@ DEFAULT_USER_AGENT = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 
+# Limit the number of players fetched per run for validation purposes.
+# Increase or set to None to process all players in the provided pool.
+MAX_PLAYERS = 10
+
+
+class ServerError(Exception):
+    """Raised when the server returns a rejection response (e.g. 403, 429, 5xx)."""
+
 
 # Function to load config
 def load_config(file_path="config.ini"):
@@ -109,10 +117,21 @@ def _find_last5_div(soup):
 def scrape_player_data(player, url):
     full_url = site_base + url
     try:
-        response = requests.get(full_url, headers=headers)
-        response.raise_for_status()
-    except requests.RequestException:
+        response = requests.get(full_url, headers=headers, timeout=15)
+    except requests.RequestException as exc:
+        print(f"connection error ({exc})")
         return None
+
+    if response.status_code in (403, 429):
+        raise ServerError(
+            f"HTTP {response.status_code} — server is blocking requests"
+        )
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        print(f"HTTP error ({exc})")
+        return None
+
     soup = BeautifulSoup(response.content, "html.parser")
 
     last5_div = _find_last5_div(soup)
@@ -165,10 +184,28 @@ def scrape_player_data(player, url):
     }
 
 
-def compile_player_data(players):
+def compile_player_data(players, limit=MAX_PLAYERS):
+    """Fetch and aggregate batting stats for each player.
+
+    Args:
+        players: Mapping of player name → Baseball-Reference URL slug.
+        limit:   Maximum number of players to process.  Pass ``None`` to
+                 process the entire pool.  Defaults to ``MAX_PLAYERS``.
+    """
     summary_data = []
-    for player, url in players.items():
-        player_data = scrape_player_data(player, url)
+    player_list = list(players.items())
+    if limit is not None:
+        player_list = player_list[:limit]
+    total = len(player_list)
+
+    for i, (player, url) in enumerate(player_list, 1):
+        print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
+        try:
+            player_data = scrape_player_data(player, url)
+        except ServerError as exc:
+            print(f"\n[!] {exc}. Stopping further requests.")
+            break
+
         # Validates data returned and that at-bats are non-zero before computing probability
         # (and, optionally) if player's walks >= strikeouts
         if player_data and player_data["At Bats"] > 0:  # and player_data["Walks"] >= player_data["Strikeouts"]:
@@ -176,6 +213,9 @@ def compile_player_data(players):
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
             summary_data.append(player_data)
+            print(f"ok  ({player_data['Hits']}-{player_data['At Bats']})")
+        else:
+            print("skipped (no recent data)")
         sleep(random.uniform(1, 5))
 
     return summary_data
@@ -227,4 +267,6 @@ def probable_hitters(summary_data, n=5):
 
 
 if __name__ == "__main__":
-    probable_hitters(compile_player_data(players=hitters), n=5)
+    # selected_hitters is a curated subset; use hitters for the full player pool.
+    # MAX_PLAYERS caps the run for validation before scaling up.
+    probable_hitters(compile_player_data(players=selected_hitters, limit=MAX_PLAYERS), n=5)

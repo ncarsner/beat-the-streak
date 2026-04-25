@@ -47,12 +47,33 @@ The metric is intentionally lightweight and designed to complement — not repla
 
 ## Usage
 
-Run against the full player list:
+Run against the curated `selected_hitters` subset (default):
 ```bash
 python main.py
 ```
 
-The `selected_hitters` dict near the top of `main.py` lets you narrow the scan to a specific subset of players without editing `players.py`.
+While running you will see a per-player progress line, for example:
+```
+[1/10] Fetching Luis Arraez ...  ok  (7-18)
+[2/10] Fetching Jurickson Profar ...  ok  (5-16)
+[3/10] Fetching Manny Machado ...  skipped (no recent data)
+...
+```
+
+If the server starts rejecting requests (HTTP 403 / 429), the run stops immediately with a message and displays results collected so far:
+```
+[!] HTTP 429 — server is blocking requests. Stopping further requests.
+```
+
+### Controlling the player pool
+
+`MAX_PLAYERS` (default `10`) in `main.py` caps how many players are fetched per run. This is intentionally conservative so you can validate the tool is working before scaling up.
+
+| Goal | Change |
+|------|--------|
+| Validate with a small batch | Keep `MAX_PLAYERS = 10` (default) |
+| Run the full curated list | Set `MAX_PLAYERS = None` |
+| Run all players | Set `MAX_PLAYERS = None` **and** change `selected_hitters` → `hitters` in `__main__` |
 
 ### Output format
 
