@@ -17,7 +17,7 @@ MAX_PLAYERS = 10
 
 selected_hitters = [  # narrow hitters
     "Luis Arraez",
-    "Jurickson Profar",
+    "Mookie Betts",
     "Xander Bogaerts",
     "Manny Machado",
     "Jonathan India",
@@ -33,23 +33,14 @@ selected_hitters = [  # narrow hitters
     "Heliot Ramos",
     "Michael Conforto",
     "CJ Abrams",
-    "Juan Yepez",
-    "Alex Call",
     "George Springer",
     "Vladimir Guerrero Jr",
     "Ernie Clement",
-    "Rhys Hoskins",
     "Jackson Chourio",
-    "Jorge Soler",
     "Austin Riley",
-    "Marcell Ozuna",
     "Matt Olson",
     "Masyn Winn",
     "Bobby Witt Jr",
-    "Vinnie Pasquantino",
-    "Salvador Perez",
-    "Charlie Blackmon",
-    "Ezequiel Tovar",
 ]
 
 # Subset of hitters filters from selected_hitters list
