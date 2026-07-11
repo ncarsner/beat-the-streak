@@ -172,7 +172,7 @@ def scrape_player_data(player, _url):
     }
 
 
-def compile_player_data(players, limit=MAX_PLAYERS, cooldown_days=DEFAULT_COOLDOWN_DAYS, cache=None):
+def compile_player_data(players, limit: int | None = MAX_PLAYERS, cooldown_days=DEFAULT_COOLDOWN_DAYS, cache=None):
     """Fetch and aggregate batting stats for each player.
 
     Args:
