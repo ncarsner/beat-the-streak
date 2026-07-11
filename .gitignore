@@ -1,4 +1,7 @@
 config.ini
+AGENTS/
+.claude/
+ralph.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
