@@ -9,6 +9,10 @@ from main import (
     lookup_player_id,
     scrape_player_data,
     compile_player_data,
+    load_no_data_cache,
+    save_no_data_cache,
+    is_in_cooldown,
+    resolve_run_config,
 )
 
 
@@ -212,3 +216,115 @@ def test_compile_player_data_skips_none_and_zero_at_bats(monkeypatch):
     players = {"NoData": "a", "ZeroAtBats": "b", "Active": "c"}
     result = compile_player_data(players, limit=None)
     assert [p["Player"] for p in result] == ["Active"]
+
+
+# ---- no-data cache: persistence ----
+
+def test_load_no_data_cache_missing_file_returns_empty_dict(tmp_path):
+    assert load_no_data_cache(tmp_path / "does_not_exist.json") == {}
+
+
+def test_load_no_data_cache_corrupt_file_returns_empty_dict(tmp_path):
+    bad_file = tmp_path / "corrupt.json"
+    bad_file.write_text("not valid json")
+    assert load_no_data_cache(bad_file) == {}
+
+
+def test_save_and_load_no_data_cache_roundtrip(tmp_path):
+    cache_file = tmp_path / "nested" / "no_data_cache.json"
+    cache = {"Player A": "2026-07-01", "Player B": "2026-07-05"}
+    save_no_data_cache(cache, cache_file)
+    assert load_no_data_cache(cache_file) == cache
+
+
+# ---- is_in_cooldown ----
+
+@pytest.mark.parametrize(
+    "days_since_checked, cooldown_days, expected",
+    [
+        (None, 7, False),   # never checked
+        (0, 7, True),       # checked today
+        (6, 7, True),       # inside the window
+        (7, 7, False),      # exactly on the boundary
+        (10, 7, False),     # outside the window
+        (2, 3, True),       # custom shorter cooldown, still inside
+        (2, 1, False),      # custom shorter cooldown, already outside
+    ],
+)
+def test_is_in_cooldown(days_since_checked, cooldown_days, expected):
+    cache = {}
+    if days_since_checked is not None:
+        checked_date = (datetime.now() - timedelta(days=days_since_checked)).strftime("%Y-%m-%d")
+        cache["Test Player"] = checked_date
+    assert is_in_cooldown("Test Player", cache, cooldown_days) is expected
+
+
+# ---- resolve_run_config ----
+
+@pytest.mark.parametrize(
+    "mode, expected_players, expected_limit",
+    [
+        ("subset", "selected_hitters", main.MAX_PLAYERS),
+        ("max", "hitters", main.MAX_PLAYERS),
+        ("full", "hitters", None),
+    ],
+)
+def test_resolve_run_config(mode, expected_players, expected_limit):
+    players, limit = resolve_run_config(mode)
+    assert players is getattr(main, expected_players)
+    assert limit == expected_limit
+
+
+def test_resolve_run_config_invalid_mode_raises():
+    with pytest.raises(ValueError):
+        resolve_run_config("nonexistent-mode")
+
+
+# ---- compile_player_data: cooldown-aware caching ----
+
+def test_compile_player_data_skips_player_in_cooldown(monkeypatch):
+    monkeypatch.setattr(main, "sleep", lambda _: None)
+    scrape_calls = []
+
+    def fake_scrape(player, url):
+        scrape_calls.append(player)
+        return {"Player": player, "At Bats": 10, "Hits": 5, "Walks": 1, "Strikeouts": 2}
+
+    monkeypatch.setattr(main, "scrape_player_data", fake_scrape)
+
+    recent = datetime.now().strftime("%Y-%m-%d")
+    cache = {"OnCooldown": recent}
+    players = {"OnCooldown": "a", "Fetchable": "b"}
+    result = compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
+
+    assert scrape_calls == ["Fetchable"]
+    assert [p["Player"] for p in result] == ["Fetchable"]
+    assert cache == {"OnCooldown": recent}  # untouched: never scraped, still on cooldown
+
+
+def test_compile_player_data_adds_player_to_cache_on_no_data(monkeypatch):
+    monkeypatch.setattr(main, "sleep", lambda _: None)
+    monkeypatch.setattr(main, "scrape_player_data", lambda player, url: None)
+
+    cache = {}
+    players = {"NoData": "a"}
+    compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
+
+    assert "NoData" in cache
+    assert cache["NoData"] == datetime.now().strftime("%Y-%m-%d")
+
+
+def test_compile_player_data_clears_cache_entry_on_success(monkeypatch):
+    monkeypatch.setattr(main, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        main,
+        "scrape_player_data",
+        lambda player, url: {"Player": player, "At Bats": 10, "Hits": 5, "Walks": 1, "Strikeouts": 2},
+    )
+
+    stale_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    cache = {"Recovered": stale_date}
+    players = {"Recovered": "a"}
+    compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
+
+    assert "Recovered" not in cache

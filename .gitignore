@@ -2,6 +2,7 @@ config.ini
 AGENTS/
 .claude/
 ralph.sh
+*-session.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

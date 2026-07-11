@@ -1,5 +1,8 @@
+import argparse
+import json
 import requests
 from datetime import datetime, timedelta
+from pathlib import Path
 from prettytable import PrettyTable
 from time import sleep
 import random
@@ -13,6 +16,14 @@ MLB_API_BASE = "https://statsapi.mlb.com/api/v1"
 # Limit the number of players fetched per run for validation purposes.
 # Increase or set to None to process all players in the provided pool.
 MAX_PLAYERS = 10
+
+# Where "no recent data" results are remembered between runs.
+NO_DATA_CACHE_FILE = Path(__file__).parent / ".cache" / "no_data_cache.json"
+
+# Days a player stays skipped after polling with no recent data — a fresh
+# game log won't have accumulated in less time than this. Overridable per
+# run via `--cooldown-days`.
+DEFAULT_COOLDOWN_DAYS = 7
 
 
 selected_hitters = [  # narrow hitters
@@ -50,6 +61,30 @@ selected_hitters = {key: hitters[key] for key in selected_hitters if key in hitt
 _player_id_cache: dict = {}
 
 
+def load_no_data_cache(path=NO_DATA_CACHE_FILE):
+    """Return the {player: last_checked_date_str} cache from a prior run, or {} if absent/corrupt."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_no_data_cache(cache, path=NO_DATA_CACHE_FILE):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(cache, f, indent=2, sort_keys=True)
+
+
+def is_in_cooldown(player, cache, cooldown_days):
+    """True if *player* polled with no recent data too recently to be worth rechecking."""
+    last_checked = cache.get(player)
+    if not last_checked:
+        return False
+    last_checked_date = datetime.strptime(last_checked, "%Y-%m-%d")
+    return (datetime.now() - last_checked_date) < timedelta(days=cooldown_days)
+
+
 def lookup_player_id(name: str):
     """Return the MLB Stats API numeric player ID for *name*, or None if not found."""
     if name in _player_id_cache:
@@ -58,7 +93,7 @@ def lookup_player_id(name: str):
         resp = requests.get(
             f"{MLB_API_BASE}/people/search",
             params={"names": name},
-            timeout=10,
+            timeout=5,
         )
         resp.raise_for_status()
         people = resp.json().get("people", [])
@@ -137,14 +172,20 @@ def scrape_player_data(player, _url):
     }
 
 
-def compile_player_data(players, limit=MAX_PLAYERS):
+def compile_player_data(players, limit=MAX_PLAYERS, cooldown_days=DEFAULT_COOLDOWN_DAYS, cache=None):
     """Fetch and aggregate batting stats for each player.
 
     Args:
-        players: Mapping of player name → value (value is unused; names drive lookups).
-        limit:   Maximum number of players to process.  Pass ``None`` to
-                 process the entire pool.  Defaults to ``MAX_PLAYERS``.
+        players:       Mapping of player name → value (value is unused; names drive lookups).
+        limit:         Maximum number of players to process.  Pass ``None`` to
+                       process the entire pool.  Defaults to ``MAX_PLAYERS``.
+        cooldown_days: Days to skip a player after they poll with no recent data.
+        cache:         {player: last_checked_date_str} dict, mutated in place —
+                       players are added on a no-data result and cleared on success.
     """
+    if cache is None:
+        cache = {}
+
     summary_data = []
     player_list = list(players.items())
     if limit is not None:
@@ -153,6 +194,11 @@ def compile_player_data(players, limit=MAX_PLAYERS):
 
     for i, (player, url) in enumerate(player_list, 1):
         print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
+
+        if is_in_cooldown(player, cache, cooldown_days):
+            print(f"skipped (cooling off, retry after {cooldown_days}d)")
+            continue
+
         player_data = scrape_player_data(player, url)
 
         # Validates data returned and that at-bats are non-zero before computing probability
@@ -163,9 +209,11 @@ def compile_player_data(players, limit=MAX_PLAYERS):
             )
             summary_data.append(player_data)
             print(f"ok  ({player_data['Hits']}-{player_data['At Bats']})")
+            cache.pop(player, None)
         else:
             print("skipped (no recent data)")
-        sleep(random.uniform(0.5, 1.5))
+            cache[player] = datetime.now().strftime("%Y-%m-%d")
+        sleep(random.uniform(0.6, 1.8))
 
     return summary_data
 
@@ -215,7 +263,49 @@ def probable_hitters(summary_data, n=5):
     print(table)
 
 
+def resolve_run_config(mode):
+    """Return the (players, limit) pair for a given --mode."""
+    if mode == "subset":
+        return selected_hitters, MAX_PLAYERS
+    if mode == "max":
+        return hitters, MAX_PLAYERS
+    if mode == "full":
+        return hitters, None
+    raise ValueError(f"Unknown mode: {mode}")
+
+
+def build_arg_parser():
+    parser = argparse.ArgumentParser(description="Beat the Streak — hit-probability ranking tool")
+    parser.add_argument(
+        "--mode",
+        choices=["subset", "max", "full"],
+        default="subset",
+        help=(
+            "subset: curated selected_hitters list, capped at MAX_PLAYERS (default); "
+            "max: full player pool, capped at MAX_PLAYERS; "
+            "full: full player pool, uncapped"
+        ),
+    )
+    parser.add_argument(
+        "--cooldown-days",
+        type=int,
+        default=DEFAULT_COOLDOWN_DAYS,
+        help=f"Days to skip a player after a no-data poll before rechecking (default: {DEFAULT_COOLDOWN_DAYS})",
+    )
+    return parser
+
+
 if __name__ == "__main__":
-    # selected_hitters is a curated subset; use hitters for the full player pool.
-    # MAX_PLAYERS caps the run for validation before scaling up.
-    probable_hitters(compile_player_data(players=selected_hitters, limit=MAX_PLAYERS), n=5)
+    args = build_arg_parser().parse_args()
+    players, limit = resolve_run_config(args.mode)
+
+    no_data_cache = load_no_data_cache()
+    summary = compile_player_data(
+        players=players,
+        limit=limit,
+        cooldown_days=args.cooldown_days,
+        cache=no_data_cache,
+    )
+    save_no_data_cache(no_data_cache)
+
+    probable_hitters(summary, n=5)
