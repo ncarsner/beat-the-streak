@@ -1,4 +1,4 @@
-# Beat the Streak — Analysis Tool
+# Beat the Streak: Analysis Tool
 
 ## Description
 
@@ -12,7 +12,7 @@ For each player in the configured list the tool:
 4. Computes a **binomial hit-probability** using the player's recent batting average and plate-appearance rate.
 5. Outputs a ranked table showing the top `n` candidates (and the bottom `n` as a contrasting reference).
 
-The metric is intentionally lightweight and designed to complement — not replace — manual lineup review.
+The metric is intentionally lightweight and designed to complement, not replace, manual lineup review.
 
 ---
 
@@ -37,7 +37,7 @@ The metric is intentionally lightweight and designed to complement — not repla
    pip install -r requirements.txt
    ```
 
-No API key or config file is required — the MLB Stats API is public and free to use.
+No API key or config file is required: the MLB Stats API is public and free to use.
 
 ---
 
@@ -56,17 +56,35 @@ While running you will see a per-player progress line, for example:
 ...
 ```
 
-A player is skipped if they can't be found, have no game log for the season, or haven't played within the past week.
+A player is skipped if they can't be found, have no game log for the season, haven't played within the past week, or are still in their no-data cooldown window (see below).
 
 ### Controlling the player pool
 
-`MAX_PLAYERS` (default `10`) in `main.py` caps how many players are fetched per run. This is intentionally conservative so you can validate the tool is working before scaling up.
+Use `--mode` to choose which players are fetched and whether the run is capped:
 
-| Goal | Change |
-|------|--------|
-| Validate with a small batch | Keep `MAX_PLAYERS = 10` (default) |
-| Run the full curated list | Set `MAX_PLAYERS = None` |
-| Run all players | Set `MAX_PLAYERS = None` **and** change `selected_hitters` → `hitters` in `__main__` |
+```bash
+python main.py --mode subset   # curated selected_hitters list, capped at MAX_PLAYERS (default)
+python main.py --mode max      # full player pool, capped at MAX_PLAYERS
+python main.py --mode full     # full player pool, uncapped
+```
+
+`MAX_PLAYERS` (default `10`) is defined in `main.py` and applies to both `subset` and `max`
+modes. Increase it there if you want a bigger validation batch without running the full pool.
+
+### No-data cache and cooldown
+
+A player who polls with no recent data is remembered in `.cache/no_data_cache.json` and
+skipped on later runs for a cooldown period, since a fresh game log won't have accumulated
+in less time than that. The player is automatically rechecked once the cooldown elapses, and
+cleared from the cache as soon as they produce data again.
+
+The cooldown defaults to 7 days and can be adjusted per run:
+
+```bash
+python main.py --cooldown-days 3
+```
+
+Use `--cooldown-days 0` to disable the cooldown and recheck every player on every run.
 
 ### Output format
 
