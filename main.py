@@ -1,34 +1,18 @@
 import requests
-from bs4 import BeautifulSoup, Comment
 from datetime import datetime, timedelta
 from prettytable import PrettyTable
 from time import sleep
 import random
-import configparser
 
 from players import hitters
 
 
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36"
-)
+# MLB Stats API — official, free JSON API; no scraping, no bot-blocking
+MLB_API_BASE = "https://statsapi.mlb.com/api/v1"
 
 # Limit the number of players fetched per run for validation purposes.
 # Increase or set to None to process all players in the provided pool.
 MAX_PLAYERS = 10
-
-
-class ServerError(Exception):
-    """Raised when the server returns a rejection response (e.g. 403, 429, 5xx)."""
-
-
-# Function to load config
-def load_config(file_path="config.ini"):
-    config = configparser.ConfigParser()
-    config.read(file_path)
-    return config
 
 
 selected_hitters = [  # narrow hitters
@@ -71,14 +55,29 @@ selected_hitters = [  # narrow hitters
 # Subset of hitters filters from selected_hitters list
 selected_hitters = {key: hitters[key] for key in selected_hitters if key in hitters}
 
-# base website
-site_base = "https://www.baseball-reference.com/players/"
+# Cache player-ID lookups so the search endpoint is only hit once per name per run
+_player_id_cache: dict = {}
 
 
-# Load config and set headers; fall back to a default User-Agent if config.ini is absent
-config = load_config()
-user_agent = config.get("browser", "user_agent", fallback=DEFAULT_USER_AGENT)
-headers = {"User-Agent": user_agent}
+def lookup_player_id(name: str):
+    """Return the MLB Stats API numeric player ID for *name*, or None if not found."""
+    if name in _player_id_cache:
+        return _player_id_cache[name]
+    try:
+        resp = requests.get(
+            f"{MLB_API_BASE}/people/search",
+            params={"names": name},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        people = resp.json().get("people", [])
+        if people:
+            player_id = people[0]["id"]
+            _player_id_cache[name] = player_id
+            return player_id
+    except requests.RequestException:
+        pass
+    return None
 
 
 def is_within_past_week(date_str):
@@ -96,84 +95,44 @@ def binomial_probability(ab, h, bb):
     return 1 - (1 - avg) ** exp
 
 
-def _find_last5_div(soup):
-    """Return the div#div_last5 element, searching inside HTML comments if needed.
+def scrape_player_data(player, _url):
+    """Fetch last-5-game batting stats for *player* from the MLB Stats API."""
+    season = datetime.today().year
+    player_id = lookup_player_id(player)
+    if not player_id:
+        return None
 
-    Baseball Reference wraps secondary tables in HTML comments for lazy-loading;
-    BeautifulSoup skips comment content by default so we search comments explicitly.
-    """
-    div = soup.find("div", id="div_last5")
-    if div:
-        return div
-    for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
-        comment_soup = BeautifulSoup(comment, "html.parser")
-        div = comment_soup.find("div", id="div_last5")
-        if div:
-            return div
-    return None
-
-
-# Scrape and summarize data for each player
-def scrape_player_data(player, url):
-    full_url = site_base + url
     try:
-        response = requests.get(full_url, headers=headers, timeout=15)
+        resp = requests.get(
+            f"{MLB_API_BASE}/people/{player_id}/stats",
+            params={
+                "stats": "gameLog",
+                "group": "hitting",
+                "season": season,
+                "gameType": "R",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
     except requests.RequestException as exc:
         print(f"connection error ({exc})")
         return None
 
-    if response.status_code in (403, 429):
-        raise ServerError(
-            f"HTTP {response.status_code} — server is blocking requests"
-        )
-    try:
-        response.raise_for_status()
-    except requests.HTTPError as exc:
-        print(f"HTTP error ({exc})")
+    splits = resp.json().get("stats", [{}])[0].get("splits", [])
+    if not splits:
         return None
 
-    soup = BeautifulSoup(response.content, "html.parser")
+    # splits are ordered oldest → newest; take the last 5 games
+    last5 = splits[-5:]
 
-    last5_div = _find_last5_div(soup)
-    if not last5_div:
-        return None
-
-    rows = last5_div.select("table > tbody > tr")
-    if not rows:
-        return None
-
-    # Use the date from the last game row (most recent)
-    last_date_str = None
-    for row in reversed(rows):
-        date_elem = row.find("th", {"data-stat": "date_game"})
-        if date_elem:
-            raw = date_elem.text.strip()
-            # Doubleheader dates appear as "YYYY-MM-DD (1)" — strip the suffix
-            last_date_str = raw.split("(")[0].strip()
-            if last_date_str:
-                break
-
+    last_date_str = last5[-1].get("date", "")
     if not last_date_str or not is_within_past_week(last_date_str):
-        return None  # Skip players whose last game was more than a week ago
+        return None
 
-    at_bats = 0
-    hits = 0
-    walks = 0
-    strikeouts = 0
-
-    for row in rows:
-        def _int(cell):
-            if cell and cell.text.strip():
-                try:
-                    return int(cell.text.strip())
-                except ValueError:
-                    pass
-            return 0
-
-        at_bats += _int(row.find("td", {"data-stat": "AB"}))
-        hits += _int(row.find("td", {"data-stat": "H"}))
-        walks += _int(row.find("td", {"data-stat": "BB"}))
-        strikeouts += _int(row.find("td", {"data-stat": "SO"}))
+    at_bats = sum(g["stat"].get("atBats", 0) for g in last5)
+    hits = sum(g["stat"].get("hits", 0) for g in last5)
+    walks = sum(g["stat"].get("baseOnBalls", 0) for g in last5)
+    strikeouts = sum(g["stat"].get("strikeOuts", 0) for g in last5)
 
     return {
         "Player": player,
@@ -188,7 +147,7 @@ def compile_player_data(players, limit=MAX_PLAYERS):
     """Fetch and aggregate batting stats for each player.
 
     Args:
-        players: Mapping of player name → Baseball-Reference URL slug.
+        players: Mapping of player name → value (value is unused; names drive lookups).
         limit:   Maximum number of players to process.  Pass ``None`` to
                  process the entire pool.  Defaults to ``MAX_PLAYERS``.
     """
@@ -200,11 +159,7 @@ def compile_player_data(players, limit=MAX_PLAYERS):
 
     for i, (player, url) in enumerate(player_list, 1):
         print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
-        try:
-            player_data = scrape_player_data(player, url)
-        except ServerError as exc:
-            print(f"\n[!] {exc}. Stopping further requests.")
-            break
+        player_data = scrape_player_data(player, url)
 
         # Validates data returned and that at-bats are non-zero before computing probability
         # (and, optionally) if player's walks >= strikeouts
@@ -216,7 +171,7 @@ def compile_player_data(players, limit=MAX_PLAYERS):
             print(f"ok  ({player_data['Hits']}-{player_data['At Bats']})")
         else:
             print("skipped (no recent data)")
-        sleep(random.uniform(1, 5))
+        sleep(random.uniform(0.5, 1.5))
 
     return summary_data
 
