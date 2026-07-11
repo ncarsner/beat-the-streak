@@ -1,19 +1,18 @@
 import requests
-from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from prettytable import PrettyTable
 from time import sleep
 import random
-import configparser
 
 from players import hitters
 
 
-# Function to load config
-def load_config(file_path="config.ini"):
-    config = configparser.ConfigParser()
-    config.read(file_path)
-    return config
+# MLB Stats API — official, free JSON API; no scraping, no bot-blocking
+MLB_API_BASE = "https://statsapi.mlb.com/api/v1"
+
+# Limit the number of players fetched per run for validation purposes.
+# Increase or set to None to process all players in the provided pool.
+MAX_PLAYERS = 10
 
 
 selected_hitters = [  # narrow hitters
@@ -56,13 +55,29 @@ selected_hitters = [  # narrow hitters
 # Subset of hitters filters from selected_hitters list
 selected_hitters = {key: hitters[key] for key in selected_hitters if key in hitters}
 
-# base website
-site_base = "https://www.baseball-reference.com/players/"
+# Cache player-ID lookups so the search endpoint is only hit once per name per run
+_player_id_cache: dict = {}
 
 
-# Load config and set headers
-config = load_config()
-headers = {"User-Agent": config["browser"]["user_agent"]}
+def lookup_player_id(name: str):
+    """Return the MLB Stats API numeric player ID for *name*, or None if not found."""
+    if name in _player_id_cache:
+        return _player_id_cache[name]
+    try:
+        resp = requests.get(
+            f"{MLB_API_BASE}/people/search",
+            params={"names": name},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        people = resp.json().get("people", [])
+        if people:
+            player_id = people[0]["id"]
+            _player_id_cache[name] = player_id
+            return player_id
+    except requests.RequestException:
+        pass
+    return None
 
 
 def is_within_past_week(date_str):
@@ -72,51 +87,55 @@ def is_within_past_week(date_str):
 
 
 def binomial_probability(ab, h, bb):
+    if ab == 0:
+        return 0.0
     pa = ab + bb
     exp = pa / 5
     avg = h / ab
     return 1 - (1 - avg) ** exp
 
 
-# Scrape and summarize data for each player
-def scrape_player_data(player, url):
-    full_url = site_base + url
-    response = requests.get(full_url, headers=None)
-    soup = BeautifulSoup(response.content, "html.parser")
+def scrape_player_data(player, _url):
+    """Fetch last-5-game batting stats for *player* from the MLB Stats API."""
+    season = datetime.today().year
+    player_id = lookup_player_id(player)
+    if not player_id:
+        return None
 
-    # Find the date in the specified XPath location
-    date_elem = soup.select_one("#div_last5 > table > tbody > tr:nth-of-type(5) > th")
-    if date_elem:
-        date_str = date_elem.text.strip()
-        if not is_within_past_week(date_str):
-            return None  # Ignore if span is older than one week
-    else:
-        return None  # Ignore if date element is not found
+    try:
+        resp = requests.get(
+            f"{MLB_API_BASE}/people/{player_id}/stats",
+            params={
+                "stats": "gameLog",
+                "group": "hitting",
+                "season": season,
+                "gameType": "R",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"connection error ({exc})")
+        return None
 
-    # Find the table rows within the specified div
-    rows = soup.select("#div_last5 > table > tbody > tr")
+    stats_list = resp.json().get("stats", [])
+    if not stats_list:
+        return None
+    splits = stats_list[0].get("splits", [])
+    if not splits:
+        return None
 
-    at_bats = 0
-    hits = 0
-    walks = 0
-    strikeouts = 0
+    # splits are ordered oldest → newest; take the last 5 games
+    last5 = splits[-5:]
 
-    for row in rows:
-        cols = row.find_all("td")
-        if len(cols) >= 12:
-            total_atbats = cols[5].text
-            total_hits = cols[7].text
-            total_walks = cols[12].text
-            total_strikeouts = cols[13].text
+    last_date_str = last5[-1].get("date", "")
+    if not last_date_str or not is_within_past_week(last_date_str):
+        return None
 
-            if total_atbats:
-                at_bats += int(total_atbats)
-            if total_hits:
-                hits += int(total_hits)
-            if total_walks:
-                walks += int(total_walks)
-            if total_strikeouts:
-                strikeouts += int(total_strikeouts)
+    at_bats = sum(g["stat"].get("atBats", 0) for g in last5)
+    hits = sum(g["stat"].get("hits", 0) for g in last5)
+    walks = sum(g["stat"].get("baseOnBalls", 0) for g in last5)
+    strikeouts = sum(g["stat"].get("strikeOuts", 0) for g in last5)
 
     return {
         "Player": player,
@@ -127,17 +146,35 @@ def scrape_player_data(player, url):
     }
 
 
-def compile_player_data(players):
+def compile_player_data(players, limit=MAX_PLAYERS):
+    """Fetch and aggregate batting stats for each player.
+
+    Args:
+        players: Mapping of player name → value (value is unused; names drive lookups).
+        limit:   Maximum number of players to process.  Pass ``None`` to
+                 process the entire pool.  Defaults to ``MAX_PLAYERS``.
+    """
     summary_data = []
-    for player, url in players.items():
+    player_list = list(players.items())
+    if limit is not None:
+        player_list = player_list[:limit]
+    total = len(player_list)
+
+    for i, (player, url) in enumerate(player_list, 1):
+        print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
         player_data = scrape_player_data(player, url)
-        # Validates data returned, (and, optionally) if player's walks >= strikeouts
-        if player_data: # and player_data["Walks"] >= player_data["Strikeouts"]:
+
+        # Validates data returned and that at-bats are non-zero before computing probability
+        # (and, optionally) if player's walks >= strikeouts
+        if player_data and player_data["At Bats"] > 0:  # and player_data["Walks"] >= player_data["Strikeouts"]:
             player_data["probability"] = binomial_probability(
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
             summary_data.append(player_data)
-        sleep(random.uniform(1, 5))
+            print(f"ok  ({player_data['Hits']}-{player_data['At Bats']})")
+        else:
+            print("skipped (no recent data)")
+        sleep(random.uniform(0.5, 1.5))
 
     return summary_data
 
@@ -154,16 +191,17 @@ def probable_hitters(summary_data, n=5):
 
     # Create and populate the table
     table = PrettyTable()
-    table.title = datetime.today().strftime("%B %#d, %Y")
+    today = datetime.today()
+    table.title = f"{today.strftime('%B')} {today.day}, {today.year}"
     table.field_names = ["Player", "H-AB", "BB/K", "Prob %"]
 
     for data in top_players:
-        probability = f"{data["probability"]:.1%}"
+        probability = f"{data['probability']:.1%}"
         table.add_row(
             [
                 data["Player"],
-                f"{data["Hits"]}-{data["At Bats"]}",
-                f"{data["Walks"]}/{data["Strikeouts"]}",
+                f"{data['Hits']}-{data['At Bats']}",
+                f"{data['Walks']}/{data['Strikeouts']}",
                 probability,
             ]
         )
@@ -172,12 +210,12 @@ def probable_hitters(summary_data, n=5):
     table.add_row(["---"] * len(table.field_names))
 
     for data in low_players:
-        probability = f"{data["probability"]:.1%}"
+        probability = f"{data['probability']:.1%}"
         table.add_row(
             [
                 data["Player"],
-                f"{data["Hits"]}-{data["At Bats"]}",
-                f"{data["Walks"]}/{data["Strikeouts"]}",
+                f"{data['Hits']}-{data['At Bats']}",
+                f"{data['Walks']}/{data['Strikeouts']}",
                 probability,
             ]
         )
@@ -187,4 +225,6 @@ def probable_hitters(summary_data, n=5):
 
 
 if __name__ == "__main__":
-    probable_hitters(compile_player_data(players=hitters), n=5)
+    # selected_hitters is a curated subset; use hitters for the full player pool.
+    # MAX_PLAYERS caps the run for validation before scaling up.
+    probable_hitters(compile_player_data(players=selected_hitters, limit=MAX_PLAYERS), n=5)
