@@ -118,7 +118,10 @@ def scrape_player_data(player, _url):
         print(f"connection error ({exc})")
         return None
 
-    splits = resp.json().get("stats", [{}])[0].get("splits", [])
+    stats_list = resp.json().get("stats", [])
+    if not stats_list:
+        return None
+    splits = stats_list[0].get("splits", [])
     if not splits:
         return None
 
