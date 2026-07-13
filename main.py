@@ -154,6 +154,8 @@ def scrape_player_data(player, _url, missing_team_cache=None):
         crosswalk_entry = TEAM_CROSSWALK.get(team_name)
         if crosswalk_entry:
             team_abbr = crosswalk_entry["abbreviation"]
+            if missing_team_cache is not None and team_name in missing_team_cache:
+                del missing_team_cache[team_name]
         else:
             team_abbr = ""
             if missing_team_cache is not None:

@@ -101,7 +101,7 @@
     "task": "auto-prune-resolved-crosswalk-gaps",
     "category": "feature",
     "priority": 6,
-    "done": false,
+    "done": true,
     "description": "Remove a team_name's entry from missing_team_cache.json once it successfully resolves against teams.py on a later run.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [
