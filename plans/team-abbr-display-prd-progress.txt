@@ -1,0 +1,1 @@
+2026-07-13 iter=1 task=create-teams-crosswalk — created teams.py with TEAM_CROSSWALK dict mapping all 30 MLB team names to {id, abbreviation} pairs seeded from the live /teams?sportId=1 API
