@@ -19,6 +19,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `lookup_player_id` renamed to `lookup_player_info`; now requests `hydrate=currentTeam`
   on the existing `/people/search` call and returns/caches `{id, team_name}` per player,
   at no extra request cost.
+- 5 team abbreviations in `TEAM_CROSSWALK` corrected to true 3-letter codes (`AZ`->`ARI`,
+  `KC`->`KCR`, `SD`->`SDP`, `SF`->`SFG`, `TB`->`TBR`), consistent with every other entry.
+
+### Fixed
+- The per-player fetch-progress line no longer prints for players skipped on cooldown; it
+  previously printed `"Fetching {player} ..."` before the cooldown check ran, implying an
+  API call was attempted when it never was.
 
 ## 2026-07-11
 
