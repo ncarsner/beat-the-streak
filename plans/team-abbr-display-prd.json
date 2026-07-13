@@ -43,7 +43,7 @@
     "task": "attach-team-abbreviation-to-player-data",
     "category": "feature",
     "priority": 3,
-    "done": false,
+    "done": true,
     "description": "Resolve each player's team_name against the teams.py crosswalk and attach the abbreviation (or blank) to their compiled data dict.",
     "files_affected": ["main.py", "teams.py"],
     "acceptance_criteria": [

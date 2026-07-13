@@ -8,6 +8,7 @@ from time import sleep
 import random
 
 from players import hitters
+from teams import TEAM_CROSSWALK
 
 
 # MLB Stats API — official, free JSON API; no scraping, no bot-blocking
@@ -130,6 +131,10 @@ def scrape_player_data(player, _url):
     if not player_info:
         return None
     player_id = player_info["id"]
+    team_name = player_info.get("team_name")
+    team_abbr = (
+        TEAM_CROSSWALK.get(team_name, {}).get("abbreviation", "") if team_name else ""
+    )
 
     try:
         resp = requests.get(
@@ -168,6 +173,7 @@ def scrape_player_data(player, _url):
 
     return {
         "Player": player,
+        "Team": team_abbr,
         "At Bats": at_bats,
         "Hits": hits,
         "Walks": walks,

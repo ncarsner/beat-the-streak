@@ -188,6 +188,7 @@ def test_scrape_player_data_success(monkeypatch):
     result = scrape_player_data("Test Player", "unused")
     assert result == {
         "Player": "Test Player",
+        "Team": "",  # "Test Team" is not in TEAM_CROSSWALK
         "At Bats": 9,
         "Hits": 3,
         "Walks": 2,
