@@ -62,7 +62,7 @@
     "task": "add-team-column-to-table",
     "category": "feature",
     "priority": 4,
-    "done": false,
+    "done": true,
     "description": "Add a Team column to the PrettyTable output in probable_hitters, positioned immediately after Player.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [

@@ -248,13 +248,14 @@ def probable_hitters(summary_data, n=5):
     table = PrettyTable()
     today = datetime.today()
     table.title = f"{today.strftime('%B')} {today.day}, {today.year}"
-    table.field_names = ["Player", "H-AB", "BB/K", "Prob %"]
+    table.field_names = ["Player", "Team", "H-AB", "BB/K", "Prob %"]
 
     for data in top_players:
         probability = f"{data['probability']:.1%}"
         table.add_row(
             [
                 data["Player"],
+                data["Team"],
                 f"{data['Hits']}-{data['At Bats']}",
                 f"{data['Walks']}/{data['Strikeouts']}",
                 probability,
@@ -269,6 +270,7 @@ def probable_hitters(summary_data, n=5):
         table.add_row(
             [
                 data["Player"],
+                data["Team"],
                 f"{data['Hits']}-{data['At Bats']}",
                 f"{data['Walks']}/{data['Strikeouts']}",
                 probability,
