@@ -9,7 +9,7 @@ class TeamInfo(TypedDict):
 
 
 TEAM_CROSSWALK: dict[str, TeamInfo] = {
-    "Arizona Diamondbacks": {"id": 109, "abbreviation": "AZ"},
+    "Arizona Diamondbacks": {"id": 109, "abbreviation": "ARI"},
     "Athletics": {"id": 133, "abbreviation": "ATH"},
     "Atlanta Braves": {"id": 144, "abbreviation": "ATL"},
     "Baltimore Orioles": {"id": 110, "abbreviation": "BAL"},
@@ -21,7 +21,7 @@ TEAM_CROSSWALK: dict[str, TeamInfo] = {
     "Colorado Rockies": {"id": 115, "abbreviation": "COL"},
     "Detroit Tigers": {"id": 116, "abbreviation": "DET"},
     "Houston Astros": {"id": 117, "abbreviation": "HOU"},
-    "Kansas City Royals": {"id": 118, "abbreviation": "KC"},
+    "Kansas City Royals": {"id": 118, "abbreviation": "KCR"},
     "Los Angeles Angels": {"id": 108, "abbreviation": "LAA"},
     "Los Angeles Dodgers": {"id": 119, "abbreviation": "LAD"},
     "Miami Marlins": {"id": 146, "abbreviation": "MIA"},
@@ -31,11 +31,11 @@ TEAM_CROSSWALK: dict[str, TeamInfo] = {
     "New York Yankees": {"id": 147, "abbreviation": "NYY"},
     "Philadelphia Phillies": {"id": 143, "abbreviation": "PHI"},
     "Pittsburgh Pirates": {"id": 134, "abbreviation": "PIT"},
-    "San Diego Padres": {"id": 135, "abbreviation": "SD"},
-    "San Francisco Giants": {"id": 137, "abbreviation": "SF"},
+    "San Diego Padres": {"id": 135, "abbreviation": "SDP"},
+    "San Francisco Giants": {"id": 137, "abbreviation": "SFG"},
     "Seattle Mariners": {"id": 136, "abbreviation": "SEA"},
     "St. Louis Cardinals": {"id": 138, "abbreviation": "STL"},
-    "Tampa Bay Rays": {"id": 139, "abbreviation": "TB"},
+    "Tampa Bay Rays": {"id": 139, "abbreviation": "TBR"},
     "Texas Rangers": {"id": 140, "abbreviation": "TEX"},
     "Toronto Blue Jays": {"id": 141, "abbreviation": "TOR"},
     "Washington Nationals": {"id": 120, "abbreviation": "WSH"},
