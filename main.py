@@ -241,12 +241,10 @@ def compile_player_data(
     total = len(player_list)
 
     for i, (player, url) in enumerate(player_list, 1):
-        print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
-
         if is_in_cooldown(player, cache, cooldown_days):
-            print(f"skipped (cooling off, retry after {cooldown_days}d)")
             continue
 
+        print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
         player_data = scrape_player_data(player, url, missing_team_cache)
 
         # Validates data returned and that at-bats are non-zero before computing probability
