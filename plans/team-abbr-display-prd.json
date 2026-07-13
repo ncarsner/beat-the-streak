@@ -80,7 +80,7 @@
     "task": "flag-missing-crosswalk-entries",
     "category": "feature",
     "priority": 5,
-    "done": false,
+    "done": true,
     "description": "When a player's team_name isn't in the teams.py crosswalk, persist a review-cache entry to .cache/missing_team_cache.json instead of printing to console.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [

@@ -11,6 +11,8 @@ from main import (
     compile_player_data,
     load_no_data_cache,
     save_no_data_cache,
+    load_missing_team_cache,
+    save_missing_team_cache,
     is_in_cooldown,
     resolve_run_config,
 )
@@ -220,7 +222,7 @@ def test_compile_player_data_respects_limit(monkeypatch, limit, expected_count):
     monkeypatch.setattr(
         main,
         "scrape_player_data",
-        lambda player, url: {
+        lambda player, url, missing_team_cache=None: {
             "Player": player,
             "At Bats": 10,
             "Hits": 5,
@@ -236,7 +238,7 @@ def test_compile_player_data_respects_limit(monkeypatch, limit, expected_count):
 def test_compile_player_data_skips_none_and_zero_at_bats(monkeypatch):
     monkeypatch.setattr(main, "sleep", lambda _: None)
 
-    def fake_scrape(player, url):
+    def fake_scrape(player, url, missing_team_cache=None):
         if player == "NoData":
             return None
         if player == "ZeroAtBats":
@@ -329,7 +331,7 @@ def test_compile_player_data_skips_player_in_cooldown(monkeypatch):
     monkeypatch.setattr(main, "sleep", lambda _: None)
     scrape_calls = []
 
-    def fake_scrape(player, url):
+    def fake_scrape(player, url, missing_team_cache=None):
         scrape_calls.append(player)
         return {"Player": player, "At Bats": 10, "Hits": 5, "Walks": 1, "Strikeouts": 2}
 
@@ -349,7 +351,7 @@ def test_compile_player_data_skips_player_in_cooldown(monkeypatch):
 
 def test_compile_player_data_adds_player_to_cache_on_no_data(monkeypatch):
     monkeypatch.setattr(main, "sleep", lambda _: None)
-    monkeypatch.setattr(main, "scrape_player_data", lambda player, url: None)
+    monkeypatch.setattr(main, "scrape_player_data", lambda player, url, missing_team_cache=None: None)
 
     cache = {}
     players = {"NoData": "a"}
@@ -364,7 +366,7 @@ def test_compile_player_data_clears_cache_entry_on_success(monkeypatch):
     monkeypatch.setattr(
         main,
         "scrape_player_data",
-        lambda player, url: {
+        lambda player, url, missing_team_cache=None: {
             "Player": player,
             "At Bats": 10,
             "Hits": 5,
@@ -379,3 +381,78 @@ def test_compile_player_data_clears_cache_entry_on_success(monkeypatch):
     compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
 
     assert "Recovered" not in cache
+
+
+# ---- missing-team cache: persistence ----
+
+
+def test_load_missing_team_cache_missing_file_returns_empty_dict(tmp_path):
+    assert load_missing_team_cache(tmp_path / "does_not_exist.json") == {}
+
+
+def test_load_missing_team_cache_corrupt_file_returns_empty_dict(tmp_path):
+    bad_file = tmp_path / "corrupt.json"
+    bad_file.write_text("not valid json")
+    assert load_missing_team_cache(bad_file) == {}
+
+
+def test_save_and_load_missing_team_cache_roundtrip(tmp_path):
+    cache_file = tmp_path / "missing_team_cache.json"
+    cache = {"Unknown FC": {"first_seen": "2026-07-13", "players": ["Alice"]}}
+    save_missing_team_cache(cache, cache_file)
+    assert load_missing_team_cache(cache_file) == cache
+
+
+# ---- missing-team cache: crosswalk-miss logging ----
+
+
+def _make_empty_stats_get(monkeypatch):
+    """Patch requests.get so /stats returns no splits (scrape returns None quickly)."""
+    def fake_get(url, params=None, timeout=None):
+        return FakeResponse({"stats": []})
+
+    monkeypatch.setattr(requests, "get", fake_get)
+
+
+def test_scrape_player_data_logs_crosswalk_miss(monkeypatch):
+    """team_name present but not in crosswalk → entry written to missing_team_cache."""
+    monkeypatch.setattr(main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Unknown Team"})
+    _make_empty_stats_get(monkeypatch)
+
+    missing = {}
+    scrape_player_data("Alice", "unused", missing)
+    assert "Unknown Team" in missing
+    assert missing["Unknown Team"]["players"] == ["Alice"]
+    assert "first_seen" in missing["Unknown Team"]
+
+
+def test_scrape_player_data_no_log_when_team_name_is_none(monkeypatch):
+    """No currentTeam (team_name is None) → missing_team_cache untouched."""
+    monkeypatch.setattr(main, "lookup_player_info", lambda name: {"id": 1, "team_name": None})
+    _make_empty_stats_get(monkeypatch)
+
+    missing = {}
+    scrape_player_data("Bob", "unused", missing)
+    assert missing == {}
+
+
+def test_scrape_player_data_crosswalk_miss_deduplicates_player(monkeypatch):
+    """Calling scrape twice for the same player/team does not duplicate the name."""
+    monkeypatch.setattr(main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Ghost Team"})
+    _make_empty_stats_get(monkeypatch)
+
+    missing = {}
+    scrape_player_data("Carol", "unused", missing)
+    scrape_player_data("Carol", "unused", missing)
+    assert missing["Ghost Team"]["players"] == ["Carol"]
+
+
+def test_scrape_player_data_crosswalk_miss_appends_different_players(monkeypatch):
+    """Two different players with the same unknown team → both names listed."""
+    monkeypatch.setattr(main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Ghost Team"})
+    _make_empty_stats_get(monkeypatch)
+
+    missing = {}
+    scrape_player_data("Dave", "unused", missing)
+    scrape_player_data("Eve", "unused", missing)
+    assert set(missing["Ghost Team"]["players"]) == {"Dave", "Eve"}

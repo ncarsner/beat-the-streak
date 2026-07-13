@@ -21,6 +21,9 @@ MAX_PLAYERS = 10
 # Where "no recent data" results are remembered between runs.
 NO_DATA_CACHE_FILE = Path(__file__).parent / ".cache" / "no_data_cache.json"
 
+# Where crosswalk misses are persisted for later review.
+MISSING_TEAM_CACHE_FILE = Path(__file__).parent / ".cache" / "missing_team_cache.json"
+
 # Days a player stays skipped after polling with no recent data — a fresh
 # game log won't have accumulated in less time than this. Overridable per
 # run via `--cooldown-days`.
@@ -77,6 +80,21 @@ def save_no_data_cache(cache, path=NO_DATA_CACHE_FILE):
         json.dump(cache, f, indent=2, sort_keys=True)
 
 
+def load_missing_team_cache(path=MISSING_TEAM_CACHE_FILE):
+    """Return the {team_name: {first_seen, players}} cache from a prior run, or {} if absent/corrupt."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_missing_team_cache(cache, path=MISSING_TEAM_CACHE_FILE):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(cache, f, indent=2, sort_keys=True)
+
+
 def is_in_cooldown(player, cache, cooldown_days):
     """True if *player* polled with no recent data too recently to be worth rechecking."""
     last_checked = cache.get(player)
@@ -124,7 +142,7 @@ def binomial_probability(ab, h, bb):
     return 1 - (1 - avg) ** exp
 
 
-def scrape_player_data(player, _url):
+def scrape_player_data(player, _url, missing_team_cache=None):
     """Fetch last-5-game batting stats for *player* from the MLB Stats API."""
     season = datetime.today().year
     player_info = lookup_player_info(player)
@@ -132,9 +150,20 @@ def scrape_player_data(player, _url):
         return None
     player_id = player_info["id"]
     team_name = player_info.get("team_name")
-    team_abbr = (
-        TEAM_CROSSWALK.get(team_name, {}).get("abbreviation", "") if team_name else ""
-    )
+    if team_name:
+        crosswalk_entry = TEAM_CROSSWALK.get(team_name)
+        if crosswalk_entry:
+            team_abbr = crosswalk_entry["abbreviation"]
+        else:
+            team_abbr = ""
+            if missing_team_cache is not None:
+                today = datetime.now().strftime("%Y-%m-%d")
+                if team_name not in missing_team_cache:
+                    missing_team_cache[team_name] = {"first_seen": today, "players": []}
+                if player not in missing_team_cache[team_name]["players"]:
+                    missing_team_cache[team_name]["players"].append(player)
+    else:
+        team_abbr = ""
 
     try:
         resp = requests.get(
@@ -186,16 +215,19 @@ def compile_player_data(
     limit: int | None = MAX_PLAYERS,
     cooldown_days=DEFAULT_COOLDOWN_DAYS,
     cache=None,
+    missing_team_cache=None,
 ):
     """Fetch and aggregate batting stats for each player.
 
     Args:
-        players:       Mapping of player name → value (value is unused; names drive lookups).
-        limit:         Maximum number of players to process.  Pass ``None`` to
-                       process the entire pool.  Defaults to ``MAX_PLAYERS``.
-        cooldown_days: Days to skip a player after they poll with no recent data.
-        cache:         {player: last_checked_date_str} dict, mutated in place —
-                       players are added on a no-data result and cleared on success.
+        players:            Mapping of player name → value (value is unused; names drive lookups).
+        limit:              Maximum number of players to process.  Pass ``None`` to
+                            process the entire pool.  Defaults to ``MAX_PLAYERS``.
+        cooldown_days:      Days to skip a player after they poll with no recent data.
+        cache:              {player: last_checked_date_str} dict, mutated in place —
+                            players are added on a no-data result and cleared on success.
+        missing_team_cache: {team_name: {first_seen, players}} dict, mutated in place —
+                            updated when a player's team_name is not found in TEAM_CROSSWALK.
     """
     if cache is None:
         cache = {}
@@ -213,7 +245,7 @@ def compile_player_data(
             print(f"skipped (cooling off, retry after {cooldown_days}d)")
             continue
 
-        player_data = scrape_player_data(player, url)
+        player_data = scrape_player_data(player, url, missing_team_cache)
 
         # Validates data returned and that at-bats are non-zero before computing probability
         # (and, optionally) if player's walks >= strikeouts
@@ -320,12 +352,15 @@ if __name__ == "__main__":
     players, limit = resolve_run_config(args.mode)
 
     no_data_cache = load_no_data_cache()
+    missing_team_cache = load_missing_team_cache()
     summary = compile_player_data(
         players=players,
         limit=limit,
         cooldown_days=args.cooldown_days,
         cache=no_data_cache,
+        missing_team_cache=missing_team_cache,
     )
     save_no_data_cache(no_data_cache)
+    save_missing_team_cache(missing_team_cache)
 
     probable_hitters(summary, n=5)
