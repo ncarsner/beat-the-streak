@@ -8,6 +8,7 @@ from time import sleep
 import random
 
 from players import hitters
+from teams import TEAM_CROSSWALK
 
 
 # MLB Stats API — official, free JSON API; no scraping, no bot-blocking
@@ -19,6 +20,9 @@ MAX_PLAYERS = 10
 
 # Where "no recent data" results are remembered between runs.
 NO_DATA_CACHE_FILE = Path(__file__).parent / ".cache" / "no_data_cache.json"
+
+# Where crosswalk misses are persisted for later review.
+MISSING_TEAM_CACHE_FILE = Path(__file__).parent / ".cache" / "missing_team_cache.json"
 
 # Days a player stays skipped after polling with no recent data — a fresh
 # game log won't have accumulated in less time than this. Overridable per
@@ -76,6 +80,21 @@ def save_no_data_cache(cache, path=NO_DATA_CACHE_FILE):
         json.dump(cache, f, indent=2, sort_keys=True)
 
 
+def load_missing_team_cache(path=MISSING_TEAM_CACHE_FILE):
+    """Return the {team_name: {first_seen, players}} cache from a prior run, or {} if absent/corrupt."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_missing_team_cache(cache, path=MISSING_TEAM_CACHE_FILE):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(cache, f, indent=2, sort_keys=True)
+
+
 def is_in_cooldown(player, cache, cooldown_days):
     """True if *player* polled with no recent data too recently to be worth rechecking."""
     last_checked = cache.get(player)
@@ -85,22 +104,24 @@ def is_in_cooldown(player, cache, cooldown_days):
     return (datetime.now() - last_checked_date) < timedelta(days=cooldown_days)
 
 
-def lookup_player_id(name: str):
-    """Return the MLB Stats API numeric player ID for *name*, or None if not found."""
+def lookup_player_info(name: str) -> dict | None:
+    """Return {id, team_name} for *name* from the MLB Stats API, or None if not found."""
     if name in _player_id_cache:
         return _player_id_cache[name]
     try:
         resp = requests.get(
             f"{MLB_API_BASE}/people/search",
-            params={"names": name},
+            params={"names": name, "hydrate": "currentTeam"},
             timeout=5,
         )
         resp.raise_for_status()
         people = resp.json().get("people", [])
         if people:
-            player_id = people[0]["id"]
-            _player_id_cache[name] = player_id
-            return player_id
+            person = people[0]
+            current_team = person.get("currentTeam") or {}
+            result = {"id": person["id"], "team_name": current_team.get("name")}
+            _player_id_cache[name] = result
+            return result
     except requests.RequestException:
         pass
     return None
@@ -121,12 +142,30 @@ def binomial_probability(ab, h, bb):
     return 1 - (1 - avg) ** exp
 
 
-def scrape_player_data(player, _url):
+def scrape_player_data(player, _url, missing_team_cache=None):
     """Fetch last-5-game batting stats for *player* from the MLB Stats API."""
     season = datetime.today().year
-    player_id = lookup_player_id(player)
-    if not player_id:
+    player_info = lookup_player_info(player)
+    if not player_info:
         return None
+    player_id = player_info["id"]
+    team_name = player_info.get("team_name")
+    if team_name:
+        crosswalk_entry = TEAM_CROSSWALK.get(team_name)
+        if crosswalk_entry:
+            team_abbr = crosswalk_entry["abbreviation"]
+            if missing_team_cache is not None and team_name in missing_team_cache:
+                del missing_team_cache[team_name]
+        else:
+            team_abbr = ""
+            if missing_team_cache is not None:
+                today = datetime.now().strftime("%Y-%m-%d")
+                if team_name not in missing_team_cache:
+                    missing_team_cache[team_name] = {"first_seen": today, "players": []}
+                if player not in missing_team_cache[team_name]["players"]:
+                    missing_team_cache[team_name]["players"].append(player)
+    else:
+        team_abbr = ""
 
     try:
         resp = requests.get(
@@ -165,6 +204,7 @@ def scrape_player_data(player, _url):
 
     return {
         "Player": player,
+        "Team": team_abbr,
         "At Bats": at_bats,
         "Hits": hits,
         "Walks": walks,
@@ -172,16 +212,24 @@ def scrape_player_data(player, _url):
     }
 
 
-def compile_player_data(players, limit: int | None = MAX_PLAYERS, cooldown_days=DEFAULT_COOLDOWN_DAYS, cache=None):
+def compile_player_data(
+    players,
+    limit: int | None = MAX_PLAYERS,
+    cooldown_days=DEFAULT_COOLDOWN_DAYS,
+    cache=None,
+    missing_team_cache=None,
+):
     """Fetch and aggregate batting stats for each player.
 
     Args:
-        players:       Mapping of player name → value (value is unused; names drive lookups).
-        limit:         Maximum number of players to process.  Pass ``None`` to
-                       process the entire pool.  Defaults to ``MAX_PLAYERS``.
-        cooldown_days: Days to skip a player after they poll with no recent data.
-        cache:         {player: last_checked_date_str} dict, mutated in place —
-                       players are added on a no-data result and cleared on success.
+        players:            Mapping of player name → value (value is unused; names drive lookups).
+        limit:              Maximum number of players to process.  Pass ``None`` to
+                            process the entire pool.  Defaults to ``MAX_PLAYERS``.
+        cooldown_days:      Days to skip a player after they poll with no recent data.
+        cache:              {player: last_checked_date_str} dict, mutated in place —
+                            players are added on a no-data result and cleared on success.
+        missing_team_cache: {team_name: {first_seen, players}} dict, mutated in place —
+                            updated when a player's team_name is not found in TEAM_CROSSWALK.
     """
     if cache is None:
         cache = {}
@@ -193,17 +241,17 @@ def compile_player_data(players, limit: int | None = MAX_PLAYERS, cooldown_days=
     total = len(player_list)
 
     for i, (player, url) in enumerate(player_list, 1):
-        print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
-
         if is_in_cooldown(player, cache, cooldown_days):
-            print(f"skipped (cooling off, retry after {cooldown_days}d)")
             continue
 
-        player_data = scrape_player_data(player, url)
+        print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
+        player_data = scrape_player_data(player, url, missing_team_cache)
 
         # Validates data returned and that at-bats are non-zero before computing probability
         # (and, optionally) if player's walks >= strikeouts
-        if player_data and player_data["At Bats"] > 0:  # and player_data["Walks"] >= player_data["Strikeouts"]:
+        if (
+            player_data and player_data["At Bats"] > 0
+        ):  # and player_data["Walks"] >= player_data["Strikeouts"]:
             player_data["probability"] = binomial_probability(
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
@@ -223,7 +271,7 @@ def probable_hitters(summary_data, n=5):
     summary_data.sort(key=lambda x: x["probability"], reverse=True)
 
     # n highest probability players
-    top_players = summary_data[:n*2]
+    top_players = summary_data[: n * 2]
 
     # n lowest probability players
     low_players = summary_data[-n:]
@@ -232,13 +280,14 @@ def probable_hitters(summary_data, n=5):
     table = PrettyTable()
     today = datetime.today()
     table.title = f"{today.strftime('%B')} {today.day}, {today.year}"
-    table.field_names = ["Player", "H-AB", "BB/K", "Prob %"]
+    table.field_names = ["Player", "Team", "H-AB", "BB/K", "Prob %"]
 
     for data in top_players:
         probability = f"{data['probability']:.1%}"
         table.add_row(
             [
                 data["Player"],
+                data["Team"],
                 f"{data['Hits']}-{data['At Bats']}",
                 f"{data['Walks']}/{data['Strikeouts']}",
                 probability,
@@ -253,6 +302,7 @@ def probable_hitters(summary_data, n=5):
         table.add_row(
             [
                 data["Player"],
+                data["Team"],
                 f"{data['Hits']}-{data['At Bats']}",
                 f"{data['Walks']}/{data['Strikeouts']}",
                 probability,
@@ -275,7 +325,9 @@ def resolve_run_config(mode):
 
 
 def build_arg_parser():
-    parser = argparse.ArgumentParser(description="Beat the Streak — hit-probability ranking tool")
+    parser = argparse.ArgumentParser(
+        description="Beat the Streak — hit-probability ranking tool"
+    )
     parser.add_argument(
         "--mode",
         choices=["subset", "max", "full"],
@@ -300,12 +352,15 @@ if __name__ == "__main__":
     players, limit = resolve_run_config(args.mode)
 
     no_data_cache = load_no_data_cache()
+    missing_team_cache = load_missing_team_cache()
     summary = compile_player_data(
         players=players,
         limit=limit,
         cooldown_days=args.cooldown_days,
         cache=no_data_cache,
+        missing_team_cache=missing_team_cache,
     )
     save_no_data_cache(no_data_cache)
+    save_missing_team_cache(missing_team_cache)
 
     probable_hitters(summary, n=5)

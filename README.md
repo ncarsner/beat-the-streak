@@ -89,21 +89,25 @@ Use `--cooldown-days 0` to disable the cooldown and recheck every player on ever
 ### Output format
 
 ```
-+-------------------------------------------+
-|             July 11, 2026                  |
-+------------------+-------+------+---------+
-| Player           | H-AB  | BB/K | Prob %  |
-+------------------+-------+------+---------+
-| Luis Arraez      | 8-20  | 3/0  | 90.5%   |
-| Manny Machado    | 6-16  | 4/4  | 84.7%   |
-| ...              | ...   | ...  | ...     |
-+------------------+-------+------+---------+
-| ---              | ---   | ---  | ---     |
-+------------------+-------+------+---------+
-| TJ Friedl        | 1-14  | 1/6  | 19.9%   |
-| ...              | ...   | ...  | ...     |
-+------------------+-------+------+---------+
++----------------------------------------------------+
+|                  July 11, 2026                      |
++------------------+------+-------+------+---------+
+| Player           | Team | H-AB  | BB/K | Prob %  |
++------------------+------+-------+------+---------+
+| Luis Arraez      | SD   | 8-20  | 3/0  | 90.5%   |
+| Manny Machado    | SD   | 6-16  | 4/4  | 84.7%   |
+| ...              | ...  | ...   | ...  | ...     |
++------------------+------+-------+------+---------+
+| ---              | ---  | ---   | ---  | ---     |
++------------------+------+-------+------+---------+
+| TJ Friedl        | CIN  | 1-14  | 1/6  | 19.9%   |
+| ...              | ...  | ...   | ...  | ...     |
++------------------+------+-------+------+---------+
 ```
+
+Team abbreviations come from a static crosswalk in `teams.py`. A player whose current
+team isn't yet in the crosswalk (or has no current team at all) shows a blank Team
+cell; crosswalk gaps are recorded in `.cache/missing_team_cache.json` for review.
 
 The separator row divides the **top `n×2`** players (best candidates) from the **bottom `n`** players (worst recent performers).
 

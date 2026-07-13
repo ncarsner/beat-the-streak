@@ -1,0 +1,118 @@
+[
+  {
+    "task": "create-teams-crosswalk",
+    "category": "feature",
+    "priority": 1,
+    "done": true,
+    "description": "Create teams.py with a static name -> {id, abbreviation} crosswalk seeded from a live /teams?sportId=1 pull, so later requirements have a lookup table to resolve against.",
+    "files_affected": ["teams.py"],
+    "acceptance_criteria": [
+      "teams.py exists with a dict mapping full team name -> {\"id\": int, \"abbreviation\": str}",
+      "All 30 current MLB team names are present as keys, matching the exact strings returned by the MLB Stats API /teams endpoint and currentTeam.name",
+      "Abbreviation values are filled in (maintainer-supplied); at minimum the 5 sampled during design (Athletics=ATH, Pirates=PIT, Padres=SD, Mariners=SEA, Giants=SF) are correct"
+    ],
+    "steps": [
+      "Fetch https://statsapi.mlb.com/api/v1/teams?sportId=1 to enumerate the 30 team name/id pairs",
+      "Write teams.py with a module-level dict (e.g. TEAM_CROSSWALK) keyed by exact API name strings, values {\"id\": ..., \"abbreviation\": ...}",
+      "Fill in abbreviation values for all 30 teams",
+      "Add/adjust type hints and a short docstring per RULES.md §3"
+    ]
+  },
+  {
+    "task": "extend-player-lookup-with-team",
+    "category": "feature",
+    "priority": 2,
+    "done": true,
+    "description": "Replace lookup_player_id with lookup_player_info, adding hydrate=currentTeam to the existing /people/search request so team name is available with zero extra API calls.",
+    "files_affected": ["main.py"],
+    "acceptance_criteria": [
+      "lookup_player_info(name) issues exactly one HTTP request to /people/search with hydrate=currentTeam",
+      "Returns a structure containing both the numeric player id and the currentTeam name (or None/blank team_name when currentTeam is absent)",
+      "Per-run cache (_player_id_cache or equivalent) stores {id, team_name} per player name, avoiding a repeat request within the same run",
+      "All call sites previously using lookup_player_id are updated to use lookup_player_info"
+    ],
+    "steps": [
+      "Rename lookup_player_id to lookup_player_info; add hydrate=currentTeam to the params dict",
+      "Extract currentTeam.name (or None if the key is absent) from the response alongside player id",
+      "Update _player_id_cache to store the {id, team_name} pair keyed by player name",
+      "Update scrape_player_data (and any other caller) to use the new function and returned shape",
+      "Update test_suite.py mocks to include a currentTeam field (present and absent cases) in mocked /people/search responses"
+    ]
+  },
+  {
+    "task": "attach-team-abbreviation-to-player-data",
+    "category": "feature",
+    "priority": 3,
+    "done": true,
+    "description": "Resolve each player's team_name against the teams.py crosswalk and attach the abbreviation (or blank) to their compiled data dict.",
+    "files_affected": ["main.py", "teams.py"],
+    "acceptance_criteria": [
+      "A player whose team_name matches a teams.py key gets \"Team\" set to the correct abbreviation",
+      "A player whose team_name does not match any teams.py key gets \"Team\" set to blank/empty string",
+      "A player with no currentTeam at all (team_name is None) gets \"Team\" set to blank/empty string",
+      "No exception is raised in either blank-cell case"
+    ],
+    "steps": [
+      "Import the crosswalk dict from teams.py into main.py",
+      "In scrape_player_data (or compile_player_data), look up team_name in the crosswalk and set player_data[\"Team\"] to the abbreviation or \"\" if not found",
+      "Keep this resolution step separate from cache-writing logic (requirement 5/6) so it can be unit tested independently"
+    ]
+  },
+  {
+    "task": "add-team-column-to-table",
+    "category": "feature",
+    "priority": 4,
+    "done": true,
+    "description": "Add a Team column to the PrettyTable output in probable_hitters, positioned immediately after Player.",
+    "files_affected": ["main.py"],
+    "acceptance_criteria": [
+      "table.field_names is [\"Player\", \"Team\", \"H-AB\", \"BB/K\", \"Prob %\"]",
+      "Each data row's Team cell reflects player_data[\"Team\"] (abbreviation or blank)",
+      "The separator row (\"---\" * len(field_names)) still renders correctly with the new column count"
+    ],
+    "steps": [
+      "Update table.field_names to insert \"Team\" after \"Player\"",
+      "Update the two table.add_row(...) call sites (top_players, low_players loops) to include data[\"Team\"] in the correct position",
+      "Manually run main.py (or the test suite) to confirm the table renders with 5 columns and no misalignment"
+    ]
+  },
+  {
+    "task": "flag-missing-crosswalk-entries",
+    "category": "feature",
+    "priority": 5,
+    "done": true,
+    "description": "When a player's team_name isn't in the teams.py crosswalk, persist a review-cache entry to .cache/missing_team_cache.json instead of printing to console.",
+    "files_affected": ["main.py"],
+    "acceptance_criteria": [
+      "A crosswalk miss (team_name present, not a teams.py key) writes/updates .cache/missing_team_cache.json with {team_name: {\"first_seen\": \"YYYY-MM-DD\", \"players\": [names]}}",
+      "A repeat miss for the same team_name appends the player's name to the existing entry's players list rather than creating a duplicate top-level key",
+      "A repeat miss for the same team_name and same player does not duplicate that name in the players list",
+      "No text is printed to the console for this case",
+      "A player with no currentTeam at all (case b, per attach-team-abbreviation-to-player-data) does NOT produce an entry in this file"
+    ],
+    "steps": [
+      "Add load_missing_team_cache/save_missing_team_cache helper functions (mirroring load_no_data_cache/save_no_data_cache's try/except and json.dump style) targeting .cache/missing_team_cache.json",
+      "In the team-resolution step, on a crosswalk miss with a non-None team_name, update the cache dict in memory: create the entry if absent (with first_seen = today), append the player name if not already present",
+      "Wire cache load/save into main.py's run flow (load before compile_player_data, save after), matching the existing no_data_cache pattern",
+      "Ensure the case-b path (no currentTeam) does not call this update logic at all"
+    ]
+  },
+  {
+    "task": "auto-prune-resolved-crosswalk-gaps",
+    "category": "feature",
+    "priority": 6,
+    "done": true,
+    "description": "Remove a team_name's entry from missing_team_cache.json once it successfully resolves against teams.py on a later run.",
+    "files_affected": ["main.py"],
+    "acceptance_criteria": [
+      "If a team_name exists as a key in missing_team_cache.json AND now resolves successfully against teams.py, that key is removed from the cache before it is saved back to disk",
+      "Team names that still fail to resolve remain untouched in the cache",
+      "The cache file is written back (via save_missing_team_cache) after any prune, so the change persists across runs"
+    ],
+    "steps": [
+      "After a successful crosswalk lookup for a given team_name, check if that team_name is a key in the loaded missing_team_cache dict",
+      "If present, delete it from the in-memory dict",
+      "Confirm save_missing_team_cache is called after the run so pruned state is persisted"
+    ]
+  }
+]

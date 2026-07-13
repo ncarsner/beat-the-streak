@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-07-13
+
+### Added
+- `teams.py`: static `TEAM_CROSSWALK` mapping all 30 MLB team names to `{id, abbreviation}`,
+  seeded from the MLB Stats API `/teams` endpoint.
+- `Team` column in the ranked output table, showing each player's current team abbreviation.
+- Persisted `.cache/missing_team_cache.json` recording any player's current team name that
+  isn't yet in `TEAM_CROSSWALK`, so gaps can be reviewed and fixed without re-running the
+  tool; entries auto-prune once the crosswalk is updated to cover them.
+
+### Changed
+- `lookup_player_id` renamed to `lookup_player_info`; now requests `hydrate=currentTeam`
+  on the existing `/people/search` call and returns/caches `{id, team_name}` per player,
+  at no extra request cost.
+
 ## 2026-07-11
 
 ### Fixed
