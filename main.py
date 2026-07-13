@@ -85,22 +85,24 @@ def is_in_cooldown(player, cache, cooldown_days):
     return (datetime.now() - last_checked_date) < timedelta(days=cooldown_days)
 
 
-def lookup_player_id(name: str):
-    """Return the MLB Stats API numeric player ID for *name*, or None if not found."""
+def lookup_player_info(name: str) -> dict | None:
+    """Return {id, team_name} for *name* from the MLB Stats API, or None if not found."""
     if name in _player_id_cache:
         return _player_id_cache[name]
     try:
         resp = requests.get(
             f"{MLB_API_BASE}/people/search",
-            params={"names": name},
+            params={"names": name, "hydrate": "currentTeam"},
             timeout=5,
         )
         resp.raise_for_status()
         people = resp.json().get("people", [])
         if people:
-            player_id = people[0]["id"]
-            _player_id_cache[name] = player_id
-            return player_id
+            person = people[0]
+            current_team = person.get("currentTeam") or {}
+            result = {"id": person["id"], "team_name": current_team.get("name")}
+            _player_id_cache[name] = result
+            return result
     except requests.RequestException:
         pass
     return None
@@ -124,9 +126,10 @@ def binomial_probability(ab, h, bb):
 def scrape_player_data(player, _url):
     """Fetch last-5-game batting stats for *player* from the MLB Stats API."""
     season = datetime.today().year
-    player_id = lookup_player_id(player)
-    if not player_id:
+    player_info = lookup_player_info(player)
+    if not player_info:
         return None
+    player_id = player_info["id"]
 
     try:
         resp = requests.get(
@@ -172,7 +175,12 @@ def scrape_player_data(player, _url):
     }
 
 
-def compile_player_data(players, limit: int | None = MAX_PLAYERS, cooldown_days=DEFAULT_COOLDOWN_DAYS, cache=None):
+def compile_player_data(
+    players,
+    limit: int | None = MAX_PLAYERS,
+    cooldown_days=DEFAULT_COOLDOWN_DAYS,
+    cache=None,
+):
     """Fetch and aggregate batting stats for each player.
 
     Args:
@@ -203,7 +211,9 @@ def compile_player_data(players, limit: int | None = MAX_PLAYERS, cooldown_days=
 
         # Validates data returned and that at-bats are non-zero before computing probability
         # (and, optionally) if player's walks >= strikeouts
-        if player_data and player_data["At Bats"] > 0:  # and player_data["Walks"] >= player_data["Strikeouts"]:
+        if (
+            player_data and player_data["At Bats"] > 0
+        ):  # and player_data["Walks"] >= player_data["Strikeouts"]:
             player_data["probability"] = binomial_probability(
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
@@ -223,7 +233,7 @@ def probable_hitters(summary_data, n=5):
     summary_data.sort(key=lambda x: x["probability"], reverse=True)
 
     # n highest probability players
-    top_players = summary_data[:n*2]
+    top_players = summary_data[: n * 2]
 
     # n lowest probability players
     low_players = summary_data[-n:]
@@ -275,7 +285,9 @@ def resolve_run_config(mode):
 
 
 def build_arg_parser():
-    parser = argparse.ArgumentParser(description="Beat the Streak — hit-probability ranking tool")
+    parser = argparse.ArgumentParser(
+        description="Beat the Streak — hit-probability ranking tool"
+    )
     parser.add_argument(
         "--mode",
         choices=["subset", "max", "full"],

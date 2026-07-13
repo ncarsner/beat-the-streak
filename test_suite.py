@@ -6,7 +6,7 @@ import main
 from main import (
     is_within_past_week,
     binomial_probability,
-    lookup_player_id,
+    lookup_player_info,
     scrape_player_data,
     compile_player_data,
     load_no_data_cache,
@@ -49,14 +49,19 @@ def _game(date_str, at_bats=3, hits=2, bb=1, so=0):
 
 def _make_stats_get(stats_payload):
     """Fake requests.get that answers the id-lookup then the stats endpoint."""
+
     def fake_get(url, params=None, timeout=None):
         if url.endswith("/people/search"):
-            return FakeResponse({"people": [{"id": 1}]})
+            return FakeResponse(
+                {"people": [{"id": 1, "currentTeam": {"name": "Test Team"}}]}
+            )
         return FakeResponse(stats_payload)
+
     return fake_get
 
 
 # ---- is_within_past_week ----
+
 
 @pytest.mark.parametrize(
     "days_ago, expected",
@@ -76,55 +81,73 @@ def test_is_within_past_week(days_ago, expected):
 
 # ---- binomial_probability ----
 
+
 @pytest.mark.parametrize(
     "ab, h, bb, expected",
     [
         (0, 0, 0, 0.0),
-        (10, 5, 3, 1 - 0.5 ** 2.6),
-        (20, 10, 5, 1 - 0.5 ** 5.0),
+        (10, 5, 3, 1 - 0.5**2.6),
+        (20, 10, 5, 1 - 0.5**5.0),
     ],
 )
 def test_binomial_probability(ab, h, bb, expected):
     assert binomial_probability(ab, h, bb) == pytest.approx(expected)
 
 
-# ---- lookup_player_id ----
-
-def test_lookup_player_id_found(monkeypatch):
-    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse({"people": [{"id": 42}]}))
-    assert lookup_player_id("Test Player") == 42
+# ---- lookup_player_info ----
 
 
-def test_lookup_player_id_not_found(monkeypatch):
+def test_lookup_player_info_found(monkeypatch):
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *a, **kw: FakeResponse(
+            {"people": [{"id": 42, "currentTeam": {"name": "Test Team"}}]}
+        ),
+    )
+    result = lookup_player_info("Test Player")
+    assert result == {"id": 42, "team_name": "Test Team"}
+
+
+def test_lookup_player_info_no_current_team(monkeypatch):
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse({"people": [{"id": 42}]})
+    )
+    result = lookup_player_info("Test Player")
+    assert result == {"id": 42, "team_name": None}
+
+
+def test_lookup_player_info_not_found(monkeypatch):
     monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse({"people": []}))
-    assert lookup_player_id("Nobody") is None
+    assert lookup_player_info("Nobody") is None
 
 
-def test_lookup_player_id_caches_after_first_call(monkeypatch):
+def test_lookup_player_info_caches_after_first_call(monkeypatch):
     calls = []
 
     def fake_get(*a, **kw):
         calls.append(1)
-        return FakeResponse({"people": [{"id": 7}]})
+        return FakeResponse({"people": [{"id": 7, "currentTeam": {"name": "Team A"}}]})
 
     monkeypatch.setattr(requests, "get", fake_get)
-    assert lookup_player_id("Cached Player") == 7
-    assert lookup_player_id("Cached Player") == 7
+    assert lookup_player_info("Cached Player") == {"id": 7, "team_name": "Team A"}
+    assert lookup_player_info("Cached Player") == {"id": 7, "team_name": "Team A"}
     assert len(calls) == 1
 
 
-def test_lookup_player_id_request_exception(monkeypatch):
+def test_lookup_player_info_request_exception(monkeypatch):
     def fake_get(*a, **kw):
         raise requests.RequestException("boom")
 
     monkeypatch.setattr(requests, "get", fake_get)
-    assert lookup_player_id("Whoever") is None
+    assert lookup_player_info("Whoever") is None
 
 
 # ---- scrape_player_data ----
 # Regression coverage for the stats-endpoint returning a present-but-empty
 # "stats" list, which used to raise an uncaught IndexError before any
 # guard existed around the JSON shape.
+
 
 @pytest.mark.parametrize(
     "stats_payload",
@@ -189,13 +212,20 @@ def test_scrape_player_data_request_exception(monkeypatch):
 
 # ---- compile_player_data ----
 
+
 @pytest.mark.parametrize("limit, expected_count", [(0, 0), (1, 1), (3, 3), (None, 5)])
 def test_compile_player_data_respects_limit(monkeypatch, limit, expected_count):
     monkeypatch.setattr(main, "sleep", lambda _: None)
     monkeypatch.setattr(
         main,
         "scrape_player_data",
-        lambda player, url: {"Player": player, "At Bats": 10, "Hits": 5, "Walks": 1, "Strikeouts": 2},
+        lambda player, url: {
+            "Player": player,
+            "At Bats": 10,
+            "Hits": 5,
+            "Walks": 1,
+            "Strikeouts": 2,
+        },
     )
     players = {f"Player{i}": f"p/player{i}.shtml" for i in range(5)}
     result = compile_player_data(players, limit=limit)
@@ -209,7 +239,13 @@ def test_compile_player_data_skips_none_and_zero_at_bats(monkeypatch):
         if player == "NoData":
             return None
         if player == "ZeroAtBats":
-            return {"Player": player, "At Bats": 0, "Hits": 0, "Walks": 0, "Strikeouts": 0}
+            return {
+                "Player": player,
+                "At Bats": 0,
+                "Hits": 0,
+                "Walks": 0,
+                "Strikeouts": 0,
+            }
         return {"Player": player, "At Bats": 10, "Hits": 5, "Walks": 1, "Strikeouts": 2}
 
     monkeypatch.setattr(main, "scrape_player_data", fake_scrape)
@@ -219,6 +255,7 @@ def test_compile_player_data_skips_none_and_zero_at_bats(monkeypatch):
 
 
 # ---- no-data cache: persistence ----
+
 
 def test_load_no_data_cache_missing_file_returns_empty_dict(tmp_path):
     assert load_no_data_cache(tmp_path / "does_not_exist.json") == {}
@@ -239,27 +276,31 @@ def test_save_and_load_no_data_cache_roundtrip(tmp_path):
 
 # ---- is_in_cooldown ----
 
+
 @pytest.mark.parametrize(
     "days_since_checked, cooldown_days, expected",
     [
-        (None, 7, False),   # never checked
-        (0, 7, True),       # checked today
-        (6, 7, True),       # inside the window
-        (7, 7, False),      # exactly on the boundary
-        (10, 7, False),     # outside the window
-        (2, 3, True),       # custom shorter cooldown, still inside
-        (2, 1, False),      # custom shorter cooldown, already outside
+        (None, 7, False),  # never checked
+        (0, 7, True),  # checked today
+        (6, 7, True),  # inside the window
+        (7, 7, False),  # exactly on the boundary
+        (10, 7, False),  # outside the window
+        (2, 3, True),  # custom shorter cooldown, still inside
+        (2, 1, False),  # custom shorter cooldown, already outside
     ],
 )
 def test_is_in_cooldown(days_since_checked, cooldown_days, expected):
     cache = {}
     if days_since_checked is not None:
-        checked_date = (datetime.now() - timedelta(days=days_since_checked)).strftime("%Y-%m-%d")
+        checked_date = (datetime.now() - timedelta(days=days_since_checked)).strftime(
+            "%Y-%m-%d"
+        )
         cache["Test Player"] = checked_date
     assert is_in_cooldown("Test Player", cache, cooldown_days) is expected
 
 
 # ---- resolve_run_config ----
+
 
 @pytest.mark.parametrize(
     "mode, expected_players, expected_limit",
@@ -282,6 +323,7 @@ def test_resolve_run_config_invalid_mode_raises():
 
 # ---- compile_player_data: cooldown-aware caching ----
 
+
 def test_compile_player_data_skips_player_in_cooldown(monkeypatch):
     monkeypatch.setattr(main, "sleep", lambda _: None)
     scrape_calls = []
@@ -299,7 +341,9 @@ def test_compile_player_data_skips_player_in_cooldown(monkeypatch):
 
     assert scrape_calls == ["Fetchable"]
     assert [p["Player"] for p in result] == ["Fetchable"]
-    assert cache == {"OnCooldown": recent}  # untouched: never scraped, still on cooldown
+    assert cache == {
+        "OnCooldown": recent
+    }  # untouched: never scraped, still on cooldown
 
 
 def test_compile_player_data_adds_player_to_cache_on_no_data(monkeypatch):
@@ -319,7 +363,13 @@ def test_compile_player_data_clears_cache_entry_on_success(monkeypatch):
     monkeypatch.setattr(
         main,
         "scrape_player_data",
-        lambda player, url: {"Player": player, "At Bats": 10, "Hits": 5, "Walks": 1, "Strikeouts": 2},
+        lambda player, url: {
+            "Player": player,
+            "At Bats": 10,
+            "Hits": 5,
+            "Walks": 1,
+            "Strikeouts": 2,
+        },
     )
 
     stale_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")

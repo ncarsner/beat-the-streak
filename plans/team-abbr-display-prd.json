@@ -22,7 +22,7 @@
     "task": "extend-player-lookup-with-team",
     "category": "feature",
     "priority": 2,
-    "done": false,
+    "done": true,
     "description": "Replace lookup_player_id with lookup_player_info, adding hydrate=currentTeam to the existing /people/search request so team name is available with zero extra API calls.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [
