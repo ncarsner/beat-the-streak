@@ -401,6 +401,9 @@ if __name__ == "__main__":
     args = build_arg_parser().parse_args()
     players, limit = resolve_run_config(args.mode)
 
+    today = datetime.today().strftime("%Y-%m-%d")
+    schedule_map = fetch_schedule(today)
+
     no_data_cache = load_no_data_cache()
     missing_team_cache = load_missing_team_cache()
     summary = compile_player_data(
@@ -409,6 +412,7 @@ if __name__ == "__main__":
         cooldown_days=args.cooldown_days,
         cache=no_data_cache,
         missing_team_cache=missing_team_cache,
+        schedule_map=schedule_map,
     )
     save_no_data_cache(no_data_cache)
     save_missing_team_cache(missing_team_cache)

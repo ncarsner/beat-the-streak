@@ -78,7 +78,7 @@
     "task": "wire-schedule-fetch-into-main",
     "category": "feature",
     "priority": 5,
-    "done": false,
+    "done": true,
     "description": "__main__ fetches the schedule once per run and passes it into compile_player_data; no persistence of the schedule map across runs.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [
