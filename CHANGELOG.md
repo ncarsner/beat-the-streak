@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-07-14
+
+### Added
+- `fetch_schedule(date)`: one request to `/schedule?sportId=1&date=<date>`, returning
+  `{team_id: game_hour_utc}` for every team playing that day. Doubleheaders are represented
+  once via `gameNumber == 1`; `Postponed` games are excluded.
+- `GameHourUTC` field on each player's compiled data (`scrape_player_data`,
+  `compile_player_data`), resolved from the crosswalk-derived `team_id` against the day's
+  schedule map. `None` when the team has no game that day or the crosswalk lookup missed.
+  Data-only this phase — no new table column, no timezone conversion.
+- `.cache/schedule_fetch_errors.log`: plain-text, append-only log of `/schedule` request
+  failures (`YYYY-MM-DD HH:MM:SS — <exception>`), console-and-file (not file-only, unlike the
+  crosswalk-gap cache) since a schedule fetch is a rare whole-run failure rather than a
+  frequent per-entity one.
+
+### Changed
+- `__main__` now fetches the day's schedule once per run and threads it through
+  `compile_player_data` -> `scrape_player_data`, at no extra per-player request cost.
+
 ## 2026-07-13
 
 ### Added
