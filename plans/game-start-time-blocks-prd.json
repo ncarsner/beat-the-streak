@@ -3,7 +3,7 @@
     "task": "add-fetch-schedule-function",
     "category": "feature",
     "priority": 1,
-    "done": false,
+    "done": true,
     "description": "Add fetch_schedule(date), issuing one request to /schedule?sportId=1&date=<date>, returning {team_id: game_hour_utc}, using gameNumber==1 for doubleheaders and excluding Postponed games.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [
@@ -25,7 +25,7 @@
     "task": "handle-schedule-fetch-failure",
     "category": "feature",
     "priority": 2,
-    "done": false,
+    "done": true,
     "description": "On a fetch_schedule request failure, degrade gracefully: print to console, append to a plain-text error log, and return an empty dict.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [
@@ -44,7 +44,7 @@
     "task": "attach-game-hour-to-player-data",
     "category": "feature",
     "priority": 3,
-    "done": false,
+    "done": true,
     "description": "scrape_player_data accepts a schedule_map parameter and attaches GameHourUTC to each player's data dict via the crosswalk-resolved team_id.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [
@@ -62,7 +62,7 @@
     "task": "thread-schedule-map-through-compile",
     "category": "feature",
     "priority": 4,
-    "done": false,
+    "done": true,
     "description": "compile_player_data accepts and threads schedule_map through to each scrape_player_data call.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [
@@ -78,7 +78,7 @@
     "task": "wire-schedule-fetch-into-main",
     "category": "feature",
     "priority": 5,
-    "done": false,
+    "done": true,
     "description": "__main__ fetches the schedule once per run and passes it into compile_player_data; no persistence of the schedule map across runs.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [

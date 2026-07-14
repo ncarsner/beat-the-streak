@@ -24,6 +24,9 @@ NO_DATA_CACHE_FILE = Path(__file__).parent / ".cache" / "no_data_cache.json"
 # Where crosswalk misses are persisted for later review.
 MISSING_TEAM_CACHE_FILE = Path(__file__).parent / ".cache" / "missing_team_cache.json"
 
+# Where /schedule request failures are logged for later review.
+SCHEDULE_ERROR_LOG_FILE = Path(__file__).parent / ".cache" / "schedule_fetch_errors.log"
+
 # Days a player stays skipped after polling with no recent data — a fresh
 # game log won't have accumulated in less time than this. Overridable per
 # run via `--cooldown-days`.
@@ -95,6 +98,44 @@ def save_missing_team_cache(cache, path=MISSING_TEAM_CACHE_FILE):
         json.dump(cache, f, indent=2, sort_keys=True)
 
 
+def log_schedule_fetch_error(exc, path=SCHEDULE_ERROR_LOG_FILE):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(path, "a") as f:
+        f.write(f"{timestamp} — {exc}\n")
+
+
+def fetch_schedule(date: str) -> dict:
+    """Return {team_id: game_hour_utc} for all games on *date* (YYYY-MM-DD).
+
+    Uses gameNumber == 1 for doubleheaders; excludes Postponed games.
+    """
+    try:
+        resp = requests.get(
+            f"{MLB_API_BASE}/schedule",
+            params={"sportId": 1, "date": date},
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"connection error ({exc})")
+        log_schedule_fetch_error(exc)
+        return {}
+    dates = resp.json().get("dates", [])
+    if not dates:
+        return {}
+    schedule: dict = {}
+    for game in dates[0].get("games", []):
+        if game.get("status", {}).get("detailedState") == "Postponed":
+            continue
+        if game.get("gameNumber") != 1:
+            continue
+        hour = datetime.fromisoformat(game["gameDate"].replace("Z", "+00:00")).hour
+        schedule[game["teams"]["home"]["team"]["id"]] = hour
+        schedule[game["teams"]["away"]["team"]["id"]] = hour
+    return schedule
+
+
 def is_in_cooldown(player, cache, cooldown_days):
     """True if *player* polled with no recent data too recently to be worth rechecking."""
     last_checked = cache.get(player)
@@ -142,7 +183,7 @@ def binomial_probability(ab, h, bb):
     return 1 - (1 - avg) ** exp
 
 
-def scrape_player_data(player, _url, missing_team_cache=None):
+def scrape_player_data(player, _url, missing_team_cache=None, schedule_map=None):
     """Fetch last-5-game batting stats for *player* from the MLB Stats API."""
     season = datetime.today().year
     player_info = lookup_player_info(player)
@@ -150,22 +191,22 @@ def scrape_player_data(player, _url, missing_team_cache=None):
         return None
     player_id = player_info["id"]
     team_name = player_info.get("team_name")
+    team_abbr = ""
+    team_id = None
     if team_name:
         crosswalk_entry = TEAM_CROSSWALK.get(team_name)
         if crosswalk_entry:
             team_abbr = crosswalk_entry["abbreviation"]
+            team_id = crosswalk_entry["id"]
             if missing_team_cache is not None and team_name in missing_team_cache:
                 del missing_team_cache[team_name]
         else:
-            team_abbr = ""
             if missing_team_cache is not None:
                 today = datetime.now().strftime("%Y-%m-%d")
                 if team_name not in missing_team_cache:
                     missing_team_cache[team_name] = {"first_seen": today, "players": []}
                 if player not in missing_team_cache[team_name]["players"]:
                     missing_team_cache[team_name]["players"].append(player)
-    else:
-        team_abbr = ""
 
     try:
         resp = requests.get(
@@ -202,6 +243,11 @@ def scrape_player_data(player, _url, missing_team_cache=None):
     walks = sum(g["stat"].get("baseOnBalls", 0) for g in last5)
     strikeouts = sum(g["stat"].get("strikeOuts", 0) for g in last5)
 
+    game_hour = (
+        schedule_map.get(team_id)
+        if (schedule_map is not None and team_id is not None)
+        else None
+    )
     return {
         "Player": player,
         "Team": team_abbr,
@@ -209,6 +255,7 @@ def scrape_player_data(player, _url, missing_team_cache=None):
         "Hits": hits,
         "Walks": walks,
         "Strikeouts": strikeouts,
+        "GameHourUTC": game_hour,
     }
 
 
@@ -218,6 +265,7 @@ def compile_player_data(
     cooldown_days=DEFAULT_COOLDOWN_DAYS,
     cache=None,
     missing_team_cache=None,
+    schedule_map=None,
 ):
     """Fetch and aggregate batting stats for each player.
 
@@ -230,6 +278,8 @@ def compile_player_data(
                             players are added on a no-data result and cleared on success.
         missing_team_cache: {team_name: {first_seen, players}} dict, mutated in place —
                             updated when a player's team_name is not found in TEAM_CROSSWALK.
+        schedule_map:       {team_id: game_hour_utc} dict from fetch_schedule, threaded
+                            through to scrape_player_data unchanged.
     """
     if cache is None:
         cache = {}
@@ -245,7 +295,7 @@ def compile_player_data(
             continue
 
         print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
-        player_data = scrape_player_data(player, url, missing_team_cache)
+        player_data = scrape_player_data(player, url, missing_team_cache, schedule_map)
 
         # Validates data returned and that at-bats are non-zero before computing probability
         # (and, optionally) if player's walks >= strikeouts
@@ -351,6 +401,9 @@ if __name__ == "__main__":
     args = build_arg_parser().parse_args()
     players, limit = resolve_run_config(args.mode)
 
+    today = datetime.today().strftime("%Y-%m-%d")
+    schedule_map = fetch_schedule(today)
+
     no_data_cache = load_no_data_cache()
     missing_team_cache = load_missing_team_cache()
     summary = compile_player_data(
@@ -359,6 +412,7 @@ if __name__ == "__main__":
         cooldown_days=args.cooldown_days,
         cache=no_data_cache,
         missing_team_cache=missing_team_cache,
+        schedule_map=schedule_map,
     )
     save_no_data_cache(no_data_cache)
     save_missing_team_cache(missing_team_cache)

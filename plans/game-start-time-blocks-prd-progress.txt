@@ -1,0 +1,5 @@
+2026-07-14 iter=1 task=add-fetch-schedule-function — added fetch_schedule(date) to main.py: single GET to /schedule, skips Postponed and gameNumber!=1, returns {team_id: hour_utc}
+2026-07-14 iter=2 task=handle-schedule-fetch-failure — added SCHEDULE_ERROR_LOG_FILE constant, log_schedule_fetch_error helper, and try/except in fetch_schedule; prints connection error, appends timestamped line to .cache/schedule_fetch_errors.log, returns {}
+2026-07-14 iter=3 task=attach-game-hour-to-player-data — added schedule_map=None param to scrape_player_data, extract team_id from crosswalk_entry on hit, set GameHourUTC in return dict (None on miss or absent schedule_map)
+2026-07-14 iter=4 task=thread-schedule-map-through-compile — added schedule_map=None param to compile_player_data and threaded it through to scrape_player_data call site; updated test mocks to match new signature
+2026-07-14 iter=5 task=wire-schedule-fetch-into-main — __main__ now calls fetch_schedule(today) once before compile_player_data and passes the result as schedule_map; no disk persistence of the map
