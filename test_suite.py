@@ -223,7 +223,7 @@ def test_compile_player_data_respects_limit(monkeypatch, limit, expected_count):
     monkeypatch.setattr(
         main,
         "scrape_player_data",
-        lambda player, url, missing_team_cache=None: {
+        lambda player, url, missing_team_cache=None, schedule_map=None: {
             "Player": player,
             "At Bats": 10,
             "Hits": 5,
@@ -239,7 +239,7 @@ def test_compile_player_data_respects_limit(monkeypatch, limit, expected_count):
 def test_compile_player_data_skips_none_and_zero_at_bats(monkeypatch):
     monkeypatch.setattr(main, "sleep", lambda _: None)
 
-    def fake_scrape(player, url, missing_team_cache=None):
+    def fake_scrape(player, url, missing_team_cache=None, schedule_map=None):
         if player == "NoData":
             return None
         if player == "ZeroAtBats":
@@ -332,7 +332,7 @@ def test_compile_player_data_skips_player_in_cooldown(monkeypatch):
     monkeypatch.setattr(main, "sleep", lambda _: None)
     scrape_calls = []
 
-    def fake_scrape(player, url, missing_team_cache=None):
+    def fake_scrape(player, url, missing_team_cache=None, schedule_map=None):
         scrape_calls.append(player)
         return {"Player": player, "At Bats": 10, "Hits": 5, "Walks": 1, "Strikeouts": 2}
 
@@ -352,7 +352,7 @@ def test_compile_player_data_skips_player_in_cooldown(monkeypatch):
 
 def test_compile_player_data_adds_player_to_cache_on_no_data(monkeypatch):
     monkeypatch.setattr(main, "sleep", lambda _: None)
-    monkeypatch.setattr(main, "scrape_player_data", lambda player, url, missing_team_cache=None: None)
+    monkeypatch.setattr(main, "scrape_player_data", lambda player, url, missing_team_cache=None, schedule_map=None: None)
 
     cache = {}
     players = {"NoData": "a"}
@@ -367,7 +367,7 @@ def test_compile_player_data_clears_cache_entry_on_success(monkeypatch):
     monkeypatch.setattr(
         main,
         "scrape_player_data",
-        lambda player, url, missing_team_cache=None: {
+        lambda player, url, missing_team_cache=None, schedule_map=None: {
             "Player": player,
             "At Bats": 10,
             "Hits": 5,

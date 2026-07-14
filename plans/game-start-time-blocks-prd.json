@@ -62,7 +62,7 @@
     "task": "thread-schedule-map-through-compile",
     "category": "feature",
     "priority": 4,
-    "done": false,
+    "done": true,
     "description": "compile_player_data accepts and threads schedule_map through to each scrape_player_data call.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [

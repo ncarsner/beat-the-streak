@@ -265,6 +265,7 @@ def compile_player_data(
     cooldown_days=DEFAULT_COOLDOWN_DAYS,
     cache=None,
     missing_team_cache=None,
+    schedule_map=None,
 ):
     """Fetch and aggregate batting stats for each player.
 
@@ -277,6 +278,8 @@ def compile_player_data(
                             players are added on a no-data result and cleared on success.
         missing_team_cache: {team_name: {first_seen, players}} dict, mutated in place —
                             updated when a player's team_name is not found in TEAM_CROSSWALK.
+        schedule_map:       {team_id: game_hour_utc} dict from fetch_schedule, threaded
+                            through to scrape_player_data unchanged.
     """
     if cache is None:
         cache = {}
@@ -292,7 +295,7 @@ def compile_player_data(
             continue
 
         print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
-        player_data = scrape_player_data(player, url, missing_team_cache)
+        player_data = scrape_player_data(player, url, missing_team_cache, schedule_map)
 
         # Validates data returned and that at-bats are non-zero before computing probability
         # (and, optionally) if player's walks >= strikeouts
