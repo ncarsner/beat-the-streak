@@ -195,6 +195,7 @@ def test_scrape_player_data_success(monkeypatch):
         "Hits": 3,
         "Walks": 2,
         "Strikeouts": 3,
+        "GameHourUTC": None,
     }
 
 

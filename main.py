@@ -183,7 +183,7 @@ def binomial_probability(ab, h, bb):
     return 1 - (1 - avg) ** exp
 
 
-def scrape_player_data(player, _url, missing_team_cache=None):
+def scrape_player_data(player, _url, missing_team_cache=None, schedule_map=None):
     """Fetch last-5-game batting stats for *player* from the MLB Stats API."""
     season = datetime.today().year
     player_info = lookup_player_info(player)
@@ -191,22 +191,22 @@ def scrape_player_data(player, _url, missing_team_cache=None):
         return None
     player_id = player_info["id"]
     team_name = player_info.get("team_name")
+    team_abbr = ""
+    team_id = None
     if team_name:
         crosswalk_entry = TEAM_CROSSWALK.get(team_name)
         if crosswalk_entry:
             team_abbr = crosswalk_entry["abbreviation"]
+            team_id = crosswalk_entry["id"]
             if missing_team_cache is not None and team_name in missing_team_cache:
                 del missing_team_cache[team_name]
         else:
-            team_abbr = ""
             if missing_team_cache is not None:
                 today = datetime.now().strftime("%Y-%m-%d")
                 if team_name not in missing_team_cache:
                     missing_team_cache[team_name] = {"first_seen": today, "players": []}
                 if player not in missing_team_cache[team_name]["players"]:
                     missing_team_cache[team_name]["players"].append(player)
-    else:
-        team_abbr = ""
 
     try:
         resp = requests.get(
@@ -243,6 +243,11 @@ def scrape_player_data(player, _url, missing_team_cache=None):
     walks = sum(g["stat"].get("baseOnBalls", 0) for g in last5)
     strikeouts = sum(g["stat"].get("strikeOuts", 0) for g in last5)
 
+    game_hour = (
+        schedule_map.get(team_id)
+        if (schedule_map is not None and team_id is not None)
+        else None
+    )
     return {
         "Player": player,
         "Team": team_abbr,
@@ -250,6 +255,7 @@ def scrape_player_data(player, _url, missing_team_cache=None):
         "Hits": hits,
         "Walks": walks,
         "Strikeouts": strikeouts,
+        "GameHourUTC": game_hour,
     }
 
 

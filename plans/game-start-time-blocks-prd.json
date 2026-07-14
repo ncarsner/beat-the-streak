@@ -44,7 +44,7 @@
     "task": "attach-game-hour-to-player-data",
     "category": "feature",
     "priority": 3,
-    "done": false,
+    "done": true,
     "description": "scrape_player_data accepts a schedule_map parameter and attaches GameHourUTC to each player's data dict via the crosswalk-resolved team_id.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [
