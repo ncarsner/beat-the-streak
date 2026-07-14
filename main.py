@@ -24,6 +24,9 @@ NO_DATA_CACHE_FILE = Path(__file__).parent / ".cache" / "no_data_cache.json"
 # Where crosswalk misses are persisted for later review.
 MISSING_TEAM_CACHE_FILE = Path(__file__).parent / ".cache" / "missing_team_cache.json"
 
+# Where /schedule request failures are logged for later review.
+SCHEDULE_ERROR_LOG_FILE = Path(__file__).parent / ".cache" / "schedule_fetch_errors.log"
+
 # Days a player stays skipped after polling with no recent data — a fresh
 # game log won't have accumulated in less time than this. Overridable per
 # run via `--cooldown-days`.
@@ -95,17 +98,29 @@ def save_missing_team_cache(cache, path=MISSING_TEAM_CACHE_FILE):
         json.dump(cache, f, indent=2, sort_keys=True)
 
 
+def log_schedule_fetch_error(exc, path=SCHEDULE_ERROR_LOG_FILE):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(path, "a") as f:
+        f.write(f"{timestamp} — {exc}\n")
+
+
 def fetch_schedule(date: str) -> dict:
     """Return {team_id: game_hour_utc} for all games on *date* (YYYY-MM-DD).
 
     Uses gameNumber == 1 for doubleheaders; excludes Postponed games.
     """
-    resp = requests.get(
-        f"{MLB_API_BASE}/schedule",
-        params={"sportId": 1, "date": date},
-        timeout=15,
-    )
-    resp.raise_for_status()
+    try:
+        resp = requests.get(
+            f"{MLB_API_BASE}/schedule",
+            params={"sportId": 1, "date": date},
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"connection error ({exc})")
+        log_schedule_fetch_error(exc)
+        return {}
     dates = resp.json().get("dates", [])
     if not dates:
         return {}

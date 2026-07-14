@@ -25,7 +25,7 @@
     "task": "handle-schedule-fetch-failure",
     "category": "feature",
     "priority": 2,
-    "done": false,
+    "done": true,
     "description": "On a fetch_schedule request failure, degrade gracefully: print to console, append to a plain-text error log, and return an empty dict.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [
