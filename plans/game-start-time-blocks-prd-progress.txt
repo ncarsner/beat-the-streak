@@ -1,0 +1,1 @@
+2026-07-14 iter=1 task=add-fetch-schedule-function — added fetch_schedule(date) to main.py: single GET to /schedule, skips Postponed and gameNumber!=1, returns {team_id: hour_utc}

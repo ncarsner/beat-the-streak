@@ -3,7 +3,7 @@
     "task": "add-fetch-schedule-function",
     "category": "feature",
     "priority": 1,
-    "done": false,
+    "done": true,
     "description": "Add fetch_schedule(date), issuing one request to /schedule?sportId=1&date=<date>, returning {team_id: game_hour_utc}, using gameNumber==1 for doubleheaders and excluding Postponed games.",
     "files_affected": ["main.py"],
     "acceptance_criteria": [

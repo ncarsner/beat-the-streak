@@ -95,6 +95,32 @@ def save_missing_team_cache(cache, path=MISSING_TEAM_CACHE_FILE):
         json.dump(cache, f, indent=2, sort_keys=True)
 
 
+def fetch_schedule(date: str) -> dict:
+    """Return {team_id: game_hour_utc} for all games on *date* (YYYY-MM-DD).
+
+    Uses gameNumber == 1 for doubleheaders; excludes Postponed games.
+    """
+    resp = requests.get(
+        f"{MLB_API_BASE}/schedule",
+        params={"sportId": 1, "date": date},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    dates = resp.json().get("dates", [])
+    if not dates:
+        return {}
+    schedule: dict = {}
+    for game in dates[0].get("games", []):
+        if game.get("status", {}).get("detailedState") == "Postponed":
+            continue
+        if game.get("gameNumber") != 1:
+            continue
+        hour = datetime.fromisoformat(game["gameDate"].replace("Z", "+00:00")).hour
+        schedule[game["teams"]["home"]["team"]["id"]] = hour
+        schedule[game["teams"]["away"]["team"]["id"]] = hour
+    return schedule
+
+
 def is_in_cooldown(player, cache, cooldown_days):
     """True if *player* polled with no recent data too recently to be worth rechecking."""
     last_checked = cache.get(player)
