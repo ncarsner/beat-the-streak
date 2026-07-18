@@ -1,1 +1,2 @@
 2026-07-18 iter=1 task=fix-readme-python-version — updated README Installation step 1 from Python 3.9+ to Python 3.10+
+2026-07-18 iter=2 task=remove-dead-config-files — deleted config.ini.example, removed local config.ini, dropped config.ini line from .gitignore

@@ -19,7 +19,7 @@
     "task": "remove-dead-config-files",
     "category": "chore",
     "priority": 2,
-    "done": false,
+    "done": true,
     "description": "config.ini and config.ini.example are leftovers from the retired Baseball-Reference scraper (browser user_agent setting). The MLB Stats API path in main.py never reads a config file (verified via grep, zero references). Delete both files and the now-unnecessary .gitignore entry.",
     "files_affected": ["config.ini", "config.ini.example", ".gitignore"],
     "acceptance_criteria": [
