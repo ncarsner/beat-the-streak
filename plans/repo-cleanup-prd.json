@@ -39,7 +39,7 @@
     "task": "add-missing-test-coverage",
     "category": "chore",
     "priority": 3,
-    "done": false,
+    "done": true,
     "description": "test_suite.py has zero coverage for fetch_schedule, log_schedule_fetch_error, probable_hitters, and build_arg_parser. fetch_schedule and log_schedule_fetch_error are the newest code in main.py (schedule-map feature) and currently have no regression net.",
     "files_affected": ["test_suite.py"],
     "acceptance_criteria": [
