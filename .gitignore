@@ -3,6 +3,7 @@ AGENTS/
 ralph.sh
 *-session.md
 CLAUDE.md
+plans/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
