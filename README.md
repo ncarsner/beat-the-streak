@@ -18,7 +18,7 @@ The metric is intentionally lightweight and designed to complement, not replace,
 
 ## Installation
 
-1. Ensure **Python 3.9+** is installed. Get it from [python.org](https://www.python.org/downloads/).
+1. Ensure **Python 3.10+** is installed. Get it from [python.org](https://www.python.org/downloads/).
 
 2. Clone the repository:
    ```bash

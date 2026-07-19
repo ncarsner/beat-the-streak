@@ -15,6 +15,11 @@ from main import (
     save_missing_team_cache,
     is_in_cooldown,
     resolve_run_config,
+    fetch_schedule,
+    log_schedule_fetch_error,
+    probable_hitters,
+    build_arg_parser,
+    DEFAULT_COOLDOWN_DAYS,
 )
 
 
@@ -352,7 +357,11 @@ def test_compile_player_data_skips_player_in_cooldown(monkeypatch):
 
 def test_compile_player_data_adds_player_to_cache_on_no_data(monkeypatch):
     monkeypatch.setattr(main, "sleep", lambda _: None)
-    monkeypatch.setattr(main, "scrape_player_data", lambda player, url, missing_team_cache=None, schedule_map=None: None)
+    monkeypatch.setattr(
+        main,
+        "scrape_player_data",
+        lambda player, url, missing_team_cache=None, schedule_map=None: None,
+    )
 
     cache = {}
     players = {"NoData": "a"}
@@ -409,6 +418,7 @@ def test_save_and_load_missing_team_cache_roundtrip(tmp_path):
 
 def _make_empty_stats_get(monkeypatch):
     """Patch requests.get so /stats returns no splits (scrape returns None quickly)."""
+
     def fake_get(url, params=None, timeout=None):
         return FakeResponse({"stats": []})
 
@@ -417,7 +427,9 @@ def _make_empty_stats_get(monkeypatch):
 
 def test_scrape_player_data_logs_crosswalk_miss(monkeypatch):
     """team_name present but not in crosswalk → entry written to missing_team_cache."""
-    monkeypatch.setattr(main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Unknown Team"})
+    monkeypatch.setattr(
+        main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Unknown Team"}
+    )
     _make_empty_stats_get(monkeypatch)
 
     missing = {}
@@ -429,7 +441,9 @@ def test_scrape_player_data_logs_crosswalk_miss(monkeypatch):
 
 def test_scrape_player_data_no_log_when_team_name_is_none(monkeypatch):
     """No currentTeam (team_name is None) → missing_team_cache untouched."""
-    monkeypatch.setattr(main, "lookup_player_info", lambda name: {"id": 1, "team_name": None})
+    monkeypatch.setattr(
+        main, "lookup_player_info", lambda name: {"id": 1, "team_name": None}
+    )
     _make_empty_stats_get(monkeypatch)
 
     missing = {}
@@ -439,7 +453,9 @@ def test_scrape_player_data_no_log_when_team_name_is_none(monkeypatch):
 
 def test_scrape_player_data_crosswalk_miss_deduplicates_player(monkeypatch):
     """Calling scrape twice for the same player/team does not duplicate the name."""
-    monkeypatch.setattr(main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Ghost Team"})
+    monkeypatch.setattr(
+        main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Ghost Team"}
+    )
     _make_empty_stats_get(monkeypatch)
 
     missing = {}
@@ -450,10 +466,138 @@ def test_scrape_player_data_crosswalk_miss_deduplicates_player(monkeypatch):
 
 def test_scrape_player_data_crosswalk_miss_appends_different_players(monkeypatch):
     """Two different players with the same unknown team → both names listed."""
-    monkeypatch.setattr(main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Ghost Team"})
+    monkeypatch.setattr(
+        main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Ghost Team"}
+    )
     _make_empty_stats_get(monkeypatch)
 
     missing = {}
     scrape_player_data("Dave", "unused", missing)
     scrape_player_data("Eve", "unused", missing)
     assert set(missing["Ghost Team"]["players"]) == {"Dave", "Eve"}
+
+
+# ---- fetch_schedule ----
+
+
+def _make_game(home_id, away_id, game_number=1, hour=19, state="Final"):
+    return {
+        "gameNumber": game_number,
+        "gameDate": f"2026-07-18T{hour:02d}:05:00Z",
+        "status": {"detailedState": state},
+        "teams": {
+            "home": {"team": {"id": home_id}},
+            "away": {"team": {"id": away_id}},
+        },
+    }
+
+
+def _schedule_payload(games):
+    return {"dates": [{"games": games}]}
+
+
+def test_fetch_schedule_single_game(monkeypatch):
+    game = _make_game(home_id=119, away_id=137, hour=19)
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse(_schedule_payload([game]))
+    )
+    assert fetch_schedule("2026-07-18") == {119: 19, 137: 19}
+
+
+def test_fetch_schedule_doubleheader_uses_game1_only(monkeypatch):
+    game1 = _make_game(home_id=119, away_id=137, game_number=1, hour=17)
+    game2 = _make_game(home_id=119, away_id=137, game_number=2, hour=20)
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *a, **kw: FakeResponse(_schedule_payload([game1, game2])),
+    )
+    assert fetch_schedule("2026-07-18") == {119: 17, 137: 17}
+
+
+def test_fetch_schedule_excludes_postponed(monkeypatch):
+    game = _make_game(home_id=119, away_id=137, state="Postponed")
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse(_schedule_payload([game]))
+    )
+    assert fetch_schedule("2026-07-18") == {}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"dates": []}, {}],
+    ids=["empty-dates", "absent-dates"],
+)
+def test_fetch_schedule_empty_or_absent_dates(monkeypatch, payload):
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse(payload))
+    assert fetch_schedule("2026-07-18") == {}
+
+
+# ---- log_schedule_fetch_error ----
+
+
+def test_log_schedule_fetch_error_creates_dirs_and_appends(tmp_path):
+    log_file = tmp_path / "subdir" / "errors.log"
+    log_schedule_fetch_error("first error", path=log_file)
+    assert log_file.exists()
+    content = log_file.read_text()
+    assert "first error" in content
+
+    log_schedule_fetch_error("second error", path=log_file)
+    content2 = log_file.read_text()
+    assert "first error" in content2
+    assert "second error" in content2
+    assert content2.count("\n") == 2
+
+
+# ---- probable_hitters ----
+
+
+def _player_entry(name, prob, team="TST", at_bats=10, hits=3, walks=1, strikeouts=2):
+    return {
+        "Player": name,
+        "Team": team,
+        "probability": prob,
+        "At Bats": at_bats,
+        "Hits": hits,
+        "Walks": walks,
+        "Strikeouts": strikeouts,
+    }
+
+
+def test_probable_hitters_top_and_bottom_slices(capsys):
+    data = [
+        _player_entry("P1", 0.9),
+        _player_entry("P2", 0.8),
+        _player_entry("P3", 0.7),
+        _player_entry("P4", 0.6),
+        _player_entry("P5", 0.5),
+        _player_entry("P6", 0.4),
+        _player_entry("P7", 0.3),
+        _player_entry("P8", 0.2),
+    ]
+    probable_hitters(data, n=2)
+    out = capsys.readouterr().out
+    # top n*2=4 players appear; bottom n=2 players appear
+    assert "P1" in out
+    assert "P4" in out
+    assert "P7" in out
+    assert "P8" in out
+    # P5 and P6 are outside both slices
+    assert "P5" not in out
+    assert "P6" not in out
+
+
+# ---- build_arg_parser ----
+
+
+def test_build_arg_parser_defaults():
+    args = build_arg_parser().parse_args([])
+    assert args.mode == "subset"
+    assert args.cooldown_days == DEFAULT_COOLDOWN_DAYS
+
+
+def test_build_arg_parser_overrides():
+    args = build_arg_parser().parse_args(["--mode", "full", "--cooldown-days", "3"])
+    assert args.mode == "full"
+    assert args.cooldown_days == 3
