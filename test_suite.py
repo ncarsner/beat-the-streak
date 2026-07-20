@@ -148,7 +148,7 @@ def test_load_no_data_cache_corrupt_file_returns_empty_dict(tmp_path):
 
 def test_save_and_load_no_data_cache_roundtrip(tmp_path):
     cache_file = tmp_path / "nested" / "no_data_cache.json"
-    cache = {"Player A": "2026-07-01", "Player B": "2026-07-05"}
+    cache = {"664034": "2026-07-01", "592518": "2026-07-05"}
     save_no_data_cache(cache, cache_file)
     assert load_no_data_cache(cache_file) == cache
 
@@ -174,8 +174,8 @@ def test_is_in_cooldown(days_since_checked, cooldown_days, expected):
         checked_date = (datetime.now() - timedelta(days=days_since_checked)).strftime(
             "%Y-%m-%d"
         )
-        cache["Test Player"] = checked_date
-    assert is_in_cooldown("Test Player", cache, cooldown_days) is expected
+        cache["12345"] = checked_date
+    assert is_in_cooldown(12345, cache, cooldown_days) is expected
 
 
 # ---- compile_player_data: cooldown-aware caching ----
@@ -198,15 +198,13 @@ def test_compile_player_data_skips_player_in_cooldown(monkeypatch):
     monkeypatch.setattr(main, "scrape_player_data", fake_scrape)
 
     recent = datetime.now().strftime("%Y-%m-%d")
-    cache = {"OnCooldown": recent}
+    cache = {"1": recent}
     players = [_make_player("OnCooldown", 1), _make_player("Fetchable", 2)]
     result = compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
 
     assert scrape_calls == ["Fetchable"]
     assert [p["Player"] for p in result] == ["Fetchable"]
-    assert cache == {
-        "OnCooldown": recent
-    }  # untouched: never scraped, still on cooldown
+    assert cache == {"1": recent}  # untouched: never scraped, still on cooldown
 
 
 def test_compile_player_data_adds_player_to_cache_on_no_data(monkeypatch):
@@ -221,8 +219,8 @@ def test_compile_player_data_adds_player_to_cache_on_no_data(monkeypatch):
     players = [_make_player("NoData", 1)]
     compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
 
-    assert "NoData" in cache
-    assert cache["NoData"] == datetime.now().strftime("%Y-%m-%d")
+    assert "1" in cache
+    assert cache["1"] == datetime.now().strftime("%Y-%m-%d")
 
 
 def test_compile_player_data_clears_cache_entry_on_success(monkeypatch):
@@ -240,11 +238,11 @@ def test_compile_player_data_clears_cache_entry_on_success(monkeypatch):
     )
 
     stale_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-    cache = {"Recovered": stale_date}
+    cache = {"1": stale_date}
     players = [_make_player("Recovered", 1)]
     compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
 
-    assert "Recovered" not in cache
+    assert "1" not in cache
 
 
 # ---- missing-team cache: persistence ----

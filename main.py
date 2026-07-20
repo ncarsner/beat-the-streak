@@ -181,9 +181,9 @@ def select_games(
     return [g for g in games if g["start_dt"] >= now]
 
 
-def is_in_cooldown(player, cache, cooldown_days):
-    """True if *player* polled with no recent data too recently to be worth rechecking."""
-    last_checked = cache.get(player)
+def is_in_cooldown(player_id, cache, cooldown_days):
+    """True if *player_id* polled with no recent data too recently to be worth rechecking."""
+    last_checked = cache.get(str(player_id))
     if not last_checked:
         return False
     last_checked_date = datetime.strptime(last_checked, "%Y-%m-%d")
@@ -322,12 +322,13 @@ def compile_player_data(
 
     for i, player in enumerate(player_list, 1):
         name = player["fullName"]
-        if is_in_cooldown(name, cache, cooldown_days):
+        player_id = player["id"]
+        if is_in_cooldown(player_id, cache, cooldown_days):
             continue
 
         print(f"[{i}/{total}] Fetching {name} ...", end=" ", flush=True)
         player_data = scrape_player_data(
-            player["id"], name, player["team_id"], schedule_map
+            player_id, name, player["team_id"], schedule_map
         )
 
         if player_data and player_data["At Bats"] > 0:
@@ -336,10 +337,10 @@ def compile_player_data(
             )
             summary_data.append(player_data)
             print(f"ok  ({player_data['Hits']}-{player_data['At Bats']})")
-            cache.pop(name, None)
+            cache.pop(str(player_id), None)
         else:
             print("skipped (no recent data)")
-            cache[name] = datetime.now().strftime("%Y-%m-%d")
+            cache[str(player_id)] = datetime.now().strftime("%Y-%m-%d")
         sleep(random.uniform(0.6, 1.8))
 
     return summary_data
