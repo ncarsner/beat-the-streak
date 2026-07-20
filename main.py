@@ -105,10 +105,11 @@ def log_schedule_fetch_error(exc, path=SCHEDULE_ERROR_LOG_FILE):
         f.write(f"{timestamp} — {exc}\n")
 
 
-def fetch_schedule(date: str) -> dict:
-    """Return {team_id: game_hour_utc} for all games on *date* (YYYY-MM-DD).
+def fetch_schedule(date: str) -> list[dict]:
+    """Return per-game records for all non-postponed games on *date* (YYYY-MM-DD).
 
-    Uses gameNumber == 1 for doubleheaders; excludes Postponed games.
+    Each record: {gamePk, gameNumber, home_team_id, away_team_id, start_dt}.
+    Both games of a doubleheader appear as distinct entries.
     """
     try:
         resp = requests.get(
@@ -120,19 +121,24 @@ def fetch_schedule(date: str) -> dict:
     except requests.RequestException as exc:
         print(f"connection error ({exc})")
         log_schedule_fetch_error(exc)
-        return {}
+        return []
     dates = resp.json().get("dates", [])
     if not dates:
-        return {}
-    schedule: dict = {}
+        return []
+    schedule = []
     for game in dates[0].get("games", []):
         if game.get("status", {}).get("detailedState") == "Postponed":
             continue
-        if game.get("gameNumber") != 1:
-            continue
-        hour = datetime.fromisoformat(game["gameDate"].replace("Z", "+00:00")).hour
-        schedule[game["teams"]["home"]["team"]["id"]] = hour
-        schedule[game["teams"]["away"]["team"]["id"]] = hour
+        start_dt = datetime.fromisoformat(game["gameDate"].replace("Z", "+00:00"))
+        schedule.append(
+            {
+                "gamePk": game["gamePk"],
+                "gameNumber": game.get("gameNumber", 1),
+                "home_team_id": game["teams"]["home"]["team"]["id"],
+                "away_team_id": game["teams"]["away"]["team"]["id"],
+                "start_dt": start_dt,
+            }
+        )
     return schedule
 
 
@@ -278,8 +284,8 @@ def compile_player_data(
                             players are added on a no-data result and cleared on success.
         missing_team_cache: {team_name: {first_seen, players}} dict, mutated in place —
                             updated when a player's team_name is not found in TEAM_CROSSWALK.
-        schedule_map:       {team_id: game_hour_utc} dict from fetch_schedule, threaded
-                            through to scrape_player_data unchanged.
+        schedule_map:       {team_id: game_hour_utc} dict derived from fetch_schedule,
+                            threaded through to scrape_player_data unchanged.
     """
     if cache is None:
         cache = {}
@@ -402,7 +408,12 @@ if __name__ == "__main__":
     players, limit = resolve_run_config(args.mode)
 
     today = datetime.today().strftime("%Y-%m-%d")
-    schedule_map = fetch_schedule(today)
+    games = fetch_schedule(today)
+    schedule_map = {}
+    for g in games:
+        hour = g["start_dt"].hour
+        schedule_map[g["home_team_id"]] = hour
+        schedule_map[g["away_team_id"]] = hour
 
     no_data_cache = load_no_data_cache()
     missing_team_cache = load_missing_team_cache()

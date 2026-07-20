@@ -480,8 +480,9 @@ def test_scrape_player_data_crosswalk_miss_appends_different_players(monkeypatch
 # ---- fetch_schedule ----
 
 
-def _make_game(home_id, away_id, game_number=1, hour=19, state="Final"):
+def _make_game(home_id, away_id, game_pk=700001, game_number=1, hour=19, state="Final"):
     return {
+        "gamePk": game_pk,
         "gameNumber": game_number,
         "gameDate": f"2026-07-18T{hour:02d}:05:00Z",
         "status": {"detailedState": state},
@@ -497,22 +498,32 @@ def _schedule_payload(games):
 
 
 def test_fetch_schedule_single_game(monkeypatch):
-    game = _make_game(home_id=119, away_id=137, hour=19)
+    game = _make_game(home_id=119, away_id=137, game_pk=700001, hour=19)
     monkeypatch.setattr(
         requests, "get", lambda *a, **kw: FakeResponse(_schedule_payload([game]))
     )
-    assert fetch_schedule("2026-07-18") == {119: 19, 137: 19}
+    result = fetch_schedule("2026-07-18")
+    assert len(result) == 1
+    r = result[0]
+    assert r["gamePk"] == 700001
+    assert r["gameNumber"] == 1
+    assert r["home_team_id"] == 119
+    assert r["away_team_id"] == 137
+    assert r["start_dt"].hour == 19
 
 
-def test_fetch_schedule_doubleheader_uses_game1_only(monkeypatch):
-    game1 = _make_game(home_id=119, away_id=137, game_number=1, hour=17)
-    game2 = _make_game(home_id=119, away_id=137, game_number=2, hour=20)
+def test_fetch_schedule_doubleheader_returns_both_games(monkeypatch):
+    game1 = _make_game(home_id=119, away_id=137, game_pk=700001, game_number=1, hour=17)
+    game2 = _make_game(home_id=119, away_id=137, game_pk=700002, game_number=2, hour=20)
     monkeypatch.setattr(
         requests,
         "get",
         lambda *a, **kw: FakeResponse(_schedule_payload([game1, game2])),
     )
-    assert fetch_schedule("2026-07-18") == {119: 17, 137: 17}
+    result = fetch_schedule("2026-07-18")
+    assert len(result) == 2
+    assert {r["gamePk"] for r in result} == {700001, 700002}
+    assert {r["gameNumber"] for r in result} == {1, 2}
 
 
 def test_fetch_schedule_excludes_postponed(monkeypatch):
@@ -520,7 +531,7 @@ def test_fetch_schedule_excludes_postponed(monkeypatch):
     monkeypatch.setattr(
         requests, "get", lambda *a, **kw: FakeResponse(_schedule_payload([game]))
     )
-    assert fetch_schedule("2026-07-18") == {}
+    assert fetch_schedule("2026-07-18") == []
 
 
 @pytest.mark.parametrize(
@@ -530,7 +541,7 @@ def test_fetch_schedule_excludes_postponed(monkeypatch):
 )
 def test_fetch_schedule_empty_or_absent_dates(monkeypatch, payload):
     monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse(payload))
-    assert fetch_schedule("2026-07-18") == {}
+    assert fetch_schedule("2026-07-18") == []
 
 
 # ---- log_schedule_fetch_error ----
