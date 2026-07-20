@@ -180,6 +180,20 @@ def fetch_lineup(game_pk: int) -> dict[str, list[dict]]:
     return result
 
 
+def select_games(
+    games: list[dict], now: datetime, scheduled: bool = False
+) -> list[dict]:
+    """Filter *games* to those relevant for this run.
+
+    Manual mode (scheduled=False): games with start_dt >= now.
+    Scheduled mode (scheduled=True): games where 0 < start_dt - now <= 2 hours.
+    """
+    if scheduled:
+        window = timedelta(hours=2)
+        return [g for g in games if timedelta(0) < g["start_dt"] - now <= window]
+    return [g for g in games if g["start_dt"] >= now]
+
+
 def is_in_cooldown(player, cache, cooldown_days):
     """True if *player* polled with no recent data too recently to be worth rechecking."""
     last_checked = cache.get(player)

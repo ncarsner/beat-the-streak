@@ -17,6 +17,7 @@ from main import (
     resolve_run_config,
     fetch_schedule,
     fetch_lineup,
+    select_games,
     log_schedule_fetch_error,
     probable_hitters,
     build_arg_parser,
@@ -676,6 +677,75 @@ def test_probable_hitters_top_and_bottom_slices(capsys):
     # P5 and P6 are outside both slices
     assert "P5" not in out
     assert "P6" not in out
+
+
+# ---- select_games ----
+
+
+def _game_record(offset_minutes: float) -> dict:
+    """Return a fake schedule record with start_dt = now + offset_minutes."""
+    now = datetime(2026, 7, 20, 18, 0, 0)
+    return {"gamePk": 1, "start_dt": now + timedelta(minutes=offset_minutes)}
+
+
+_NOW = datetime(2026, 7, 20, 18, 0, 0)
+
+
+def _gr(offset_minutes: float) -> dict:
+    return {"gamePk": 1, "start_dt": _NOW + timedelta(minutes=offset_minutes)}
+
+
+@pytest.mark.parametrize(
+    "offset_minutes, expected_included",
+    [
+        (180, True),  # 3h in the future — included
+        (-1, False),  # already started — excluded
+        (0, True),  # exactly now — boundary: included (>= now)
+        (90, True),  # 90 min in future — included
+    ],
+    ids=["3h-future", "already-started", "boundary-exactly-now", "90min-future"],
+)
+def test_select_games_manual_mode(offset_minutes, expected_included):
+    game = _gr(offset_minutes)
+    result = select_games([game], _NOW, scheduled=False)
+    assert (game in result) is expected_included
+
+
+@pytest.mark.parametrize(
+    "offset_minutes, expected_included",
+    [
+        (90, True),  # 90 min — inside [0, 2h] window
+        (180, False),  # 3h — outside window
+        (-1, False),  # already started — excluded
+        (0, False),  # exactly now — boundary: excluded (not > 0)
+        (120, True),  # exactly 2h — boundary: included (<= 2h)
+    ],
+    ids=[
+        "90min-in-window",
+        "3h-outside-window",
+        "already-started",
+        "boundary-exactly-now",
+        "boundary-exactly-2h",
+    ],
+)
+def test_select_games_scheduled_mode(offset_minutes, expected_included):
+    game = _gr(offset_minutes)
+    result = select_games([game], _NOW, scheduled=True)
+    assert (game in result) is expected_included
+
+
+def test_select_games_empty_input():
+    assert select_games([], _NOW, scheduled=False) == []
+    assert select_games([], _NOW, scheduled=True) == []
+
+
+def test_select_games_filters_multiple_games():
+    games = [_gr(-60), _gr(60), _gr(90), _gr(200)]
+    manual = select_games(games, _NOW, scheduled=False)
+    assert len(manual) == 3  # excludes the -60 min game
+
+    scheduled = select_games(games, _NOW, scheduled=True)
+    assert len(scheduled) == 2  # 60 min and 90 min only; -60 and 200 excluded
 
 
 # ---- build_arg_parser ----
