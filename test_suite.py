@@ -16,6 +16,7 @@ from main import (
     is_in_cooldown,
     resolve_run_config,
     fetch_schedule,
+    fetch_lineup,
     log_schedule_fetch_error,
     probable_hitters,
     build_arg_parser,
@@ -542,6 +543,84 @@ def test_fetch_schedule_excludes_postponed(monkeypatch):
 def test_fetch_schedule_empty_or_absent_dates(monkeypatch, payload):
     monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse(payload))
     assert fetch_schedule("2026-07-18") == []
+
+
+# ---- fetch_lineup ----
+
+
+def _make_boxscore_payload(home_order, away_order, home_team_id=119, away_team_id=137):
+    """Build a fake boxscore payload with the given batting orders."""
+
+    def _team(batting_order, team_id):
+        players = {}
+        for pid in batting_order:
+            players[f"ID{pid}"] = {
+                "person": {"id": pid, "fullName": f"Player {pid}"},
+                "parentTeamId": team_id,
+            }
+        return {"battingOrder": batting_order, "players": players}
+
+    return {
+        "teams": {
+            "home": _team(home_order, home_team_id),
+            "away": _team(away_order, away_team_id),
+        }
+    }
+
+
+def test_fetch_lineup_posted_both_teams(monkeypatch):
+    payload = _make_boxscore_payload([111, 222], [333, 444])
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse(payload))
+    result = fetch_lineup(700001)
+    assert len(result["home"]) == 2
+    assert len(result["away"]) == 2
+    assert result["home"][0] == {"id": 111, "fullName": "Player 111", "team_id": 119}
+    assert result["away"][0] == {"id": 333, "fullName": "Player 333", "team_id": 137}
+
+
+@pytest.mark.parametrize(
+    "home_order, away_order",
+    [
+        ([], []),
+        ([], [111, 222]),
+        ([111, 222], []),
+    ],
+    ids=["both-empty", "home-empty", "away-empty"],
+)
+def test_fetch_lineup_empty_batting_order_returns_empty_lists(
+    monkeypatch, home_order, away_order
+):
+    payload = _make_boxscore_payload(home_order, away_order)
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse(payload))
+    result = fetch_lineup(700001)
+    assert result["home"] == ([] if not home_order else result["home"])
+    assert result["away"] == ([] if not away_order else result["away"])
+    assert len(result["home"]) == len(home_order)
+    assert len(result["away"]) == len(away_order)
+
+
+def test_fetch_lineup_absent_batting_order_key(monkeypatch):
+    payload = {"teams": {"home": {"players": {}}, "away": {"players": {}}}}
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse(payload))
+    result = fetch_lineup(700001)
+    assert result == {"home": [], "away": []}
+
+
+def test_fetch_lineup_request_exception_returns_empty(monkeypatch):
+    def fake_get(*a, **kw):
+        raise requests.RequestException("timeout")
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    result = fetch_lineup(700001)
+    assert result == {"home": [], "away": []}
+
+
+def test_fetch_lineup_non_2xx_returns_empty(monkeypatch):
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse({}, status_code=503)
+    )
+    result = fetch_lineup(700001)
+    assert result == {"home": [], "away": []}
 
 
 # ---- log_schedule_fetch_error ----

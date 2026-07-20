@@ -142,6 +142,44 @@ def fetch_schedule(date: str) -> list[dict]:
     return schedule
 
 
+def fetch_lineup(game_pk: int) -> dict[str, list[dict]]:
+    """Return posted batting-order players for *game_pk* keyed by "home" and "away".
+
+    Each player dict: {id, fullName, team_id}. A team with an empty or absent
+    battingOrder returns an empty list for that side. Returns {"home": [], "away": []}
+    on request failure without raising.
+    """
+    try:
+        resp = requests.get(
+            f"{MLB_API_BASE}/game/{game_pk}/boxscore",
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"lineup fetch error for gamePk={game_pk} ({exc})")
+        log_schedule_fetch_error(exc)
+        return {"home": [], "away": []}
+
+    teams_data = resp.json().get("teams", {})
+    result: dict[str, list[dict]] = {}
+    for side in ("home", "away"):
+        team = teams_data.get(side, {})
+        batting_order = team.get("battingOrder") or []
+        team_players = team.get("players", {})
+        side_list = []
+        for player_id in batting_order:
+            info = team_players.get(f"ID{player_id}", {})
+            side_list.append(
+                {
+                    "id": player_id,
+                    "fullName": info.get("person", {}).get("fullName", ""),
+                    "team_id": info.get("parentTeamId"),
+                }
+            )
+        result[side] = side_list
+    return result
+
+
 def is_in_cooldown(player, cache, cooldown_days):
     """True if *player* polled with no recent data too recently to be worth rechecking."""
     last_checked = cache.get(player)
