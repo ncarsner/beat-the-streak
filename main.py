@@ -1,7 +1,7 @@
 import argparse
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from prettytable import PrettyTable
 from time import sleep
@@ -421,29 +421,16 @@ def probable_hitters(summary_data, n=5):
     print(table)
 
 
-def resolve_run_config(mode):
-    """Return the (players, limit) pair for a given --mode."""
-    if mode == "subset":
-        return selected_hitters, MAX_PLAYERS
-    if mode == "max":
-        return hitters, MAX_PLAYERS
-    if mode == "full":
-        return hitters, None
-    raise ValueError(f"Unknown mode: {mode}")
-
-
 def build_arg_parser():
     parser = argparse.ArgumentParser(
         description="Beat the Streak — hit-probability ranking tool"
     )
     parser.add_argument(
-        "--mode",
-        choices=["subset", "max", "full"],
-        default="subset",
+        "--scheduled",
+        action="store_true",
         help=(
-            "subset: curated selected_hitters list, capped at MAX_PLAYERS (default); "
-            "max: full player pool, capped at MAX_PLAYERS; "
-            "full: full player pool, uncapped"
+            "Scheduled mode: only process games starting within the next 2 hours. "
+            "Without this flag, all games starting at or after now are included (manual mode)."
         ),
     )
     parser.add_argument(
@@ -457,12 +444,14 @@ def build_arg_parser():
 
 if __name__ == "__main__":
     args = build_arg_parser().parse_args()
-    players, limit = resolve_run_config(args.mode)
 
     today = datetime.today().strftime("%Y-%m-%d")
+    now = datetime.now(timezone.utc)
     games = fetch_schedule(today)
+    selected = select_games(games, now, scheduled=args.scheduled)
+
     schedule_map = {}
-    for g in games:
+    for g in selected:
         hour = g["start_dt"].hour
         schedule_map[g["home_team_id"]] = hour
         schedule_map[g["away_team_id"]] = hour
@@ -470,8 +459,8 @@ if __name__ == "__main__":
     no_data_cache = load_no_data_cache()
     missing_team_cache = load_missing_team_cache()
     summary = compile_player_data(
-        players=players,
-        limit=limit,
+        players=hitters,
+        limit=MAX_PLAYERS,
         cooldown_days=args.cooldown_days,
         cache=no_data_cache,
         missing_team_cache=missing_team_cache,

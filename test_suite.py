@@ -14,7 +14,6 @@ from main import (
     load_missing_team_cache,
     save_missing_team_cache,
     is_in_cooldown,
-    resolve_run_config,
     fetch_schedule,
     fetch_lineup,
     select_games,
@@ -308,28 +307,6 @@ def test_is_in_cooldown(days_since_checked, cooldown_days, expected):
         )
         cache["Test Player"] = checked_date
     assert is_in_cooldown("Test Player", cache, cooldown_days) is expected
-
-
-# ---- resolve_run_config ----
-
-
-@pytest.mark.parametrize(
-    "mode, expected_players, expected_limit",
-    [
-        ("subset", "selected_hitters", main.MAX_PLAYERS),
-        ("max", "hitters", main.MAX_PLAYERS),
-        ("full", "hitters", None),
-    ],
-)
-def test_resolve_run_config(mode, expected_players, expected_limit):
-    players, limit = resolve_run_config(mode)
-    assert players is getattr(main, expected_players)
-    assert limit == expected_limit
-
-
-def test_resolve_run_config_invalid_mode_raises():
-    with pytest.raises(ValueError):
-        resolve_run_config("nonexistent-mode")
 
 
 # ---- compile_player_data: cooldown-aware caching ----
@@ -753,11 +730,22 @@ def test_select_games_filters_multiple_games():
 
 def test_build_arg_parser_defaults():
     args = build_arg_parser().parse_args([])
-    assert args.mode == "subset"
+    assert args.scheduled is False
     assert args.cooldown_days == DEFAULT_COOLDOWN_DAYS
 
 
-def test_build_arg_parser_overrides():
-    args = build_arg_parser().parse_args(["--mode", "full", "--cooldown-days", "3"])
-    assert args.mode == "full"
+def test_build_arg_parser_scheduled_flag():
+    args = build_arg_parser().parse_args(["--scheduled"])
+    assert args.scheduled is True
+
+
+def test_build_arg_parser_cooldown_override():
+    args = build_arg_parser().parse_args(["--cooldown-days", "3"])
     assert args.cooldown_days == 3
+
+
+def test_build_arg_parser_mode_not_recognized():
+    import pytest
+
+    with pytest.raises(SystemExit):
+        build_arg_parser().parse_args(["--mode", "full"])
