@@ -11,8 +11,6 @@ from main import (
     scrape_player_data,
     load_no_data_cache,
     save_no_data_cache,
-    load_missing_team_cache,
-    save_missing_team_cache,
     load_queried_games_cache,
     save_queried_games_cache,
     is_game_queried_today,
@@ -243,26 +241,6 @@ def test_compile_player_data_clears_cache_entry_on_success(monkeypatch):
     compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
 
     assert "1" not in cache
-
-
-# ---- missing-team cache: persistence ----
-
-
-def test_load_missing_team_cache_missing_file_returns_empty_dict(tmp_path):
-    assert load_missing_team_cache(tmp_path / "does_not_exist.json") == {}
-
-
-def test_load_missing_team_cache_corrupt_file_returns_empty_dict(tmp_path):
-    bad_file = tmp_path / "corrupt.json"
-    bad_file.write_text("not valid json")
-    assert load_missing_team_cache(bad_file) == {}
-
-
-def test_save_and_load_missing_team_cache_roundtrip(tmp_path):
-    cache_file = tmp_path / "missing_team_cache.json"
-    cache = {"Unknown FC": {"first_seen": "2026-07-13", "players": ["Alice"]}}
-    save_missing_team_cache(cache, cache_file)
-    assert load_missing_team_cache(cache_file) == cache
 
 
 # ---- fetch_schedule ----

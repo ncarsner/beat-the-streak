@@ -20,9 +20,6 @@ MAX_PLAYERS = 10
 # Where "no recent data" results are remembered between runs.
 NO_DATA_CACHE_FILE = Path(__file__).parent / ".cache" / "no_data_cache.json"
 
-# Where crosswalk misses are persisted for later review.
-MISSING_TEAM_CACHE_FILE = Path(__file__).parent / ".cache" / "missing_team_cache.json"
-
 # Where per-game lineup queries are recorded to avoid re-querying on the same day.
 QUERIED_GAMES_CACHE_FILE = Path(__file__).parent / ".cache" / "queried_games_cache.json"
 
@@ -68,21 +65,6 @@ def save_queried_games_cache(cache, path=QUERIED_GAMES_CACHE_FILE):
 def is_game_queried_today(game_pk: int, cache: dict, today: str) -> bool:
     """True if *game_pk* was already queried on *today*."""
     return cache.get(str(game_pk)) == today
-
-
-def load_missing_team_cache(path=MISSING_TEAM_CACHE_FILE):
-    """Return the {team_name: {first_seen, players}} cache from a prior run, or {} if absent/corrupt."""
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def save_missing_team_cache(cache, path=MISSING_TEAM_CACHE_FILE):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(cache, f, indent=2, sort_keys=True)
 
 
 def log_schedule_fetch_error(exc, path=SCHEDULE_ERROR_LOG_FILE):
@@ -297,21 +279,19 @@ def compile_player_data(
     limit: int | None = MAX_PLAYERS,
     cooldown_days=DEFAULT_COOLDOWN_DAYS,
     cache=None,
-    missing_team_cache=None,
     schedule_map=None,
 ):
     """Fetch and aggregate batting stats for each player.
 
     Args:
-        players:            List of player dicts with {id, fullName, team_id} from lineup fetch.
-        limit:              Maximum number of players to process.  Pass ``None`` to
-                            process the entire pool.  Defaults to ``MAX_PLAYERS``.
-        cooldown_days:      Days to skip a player after they poll with no recent data.
-        cache:              {player_name: last_checked_date_str} dict, mutated in place —
-                            players are added on a no-data result and cleared on success.
-        missing_team_cache: Retained for task-10 cleanup; unused by this function.
-        schedule_map:       {team_id: game_hour_utc} dict derived from fetch_schedule,
-                            threaded through to scrape_player_data unchanged.
+        players:       List of player dicts with {id, fullName, team_id} from lineup fetch.
+        limit:         Maximum number of players to process.  Pass ``None`` to
+                       process the entire pool.  Defaults to ``MAX_PLAYERS``.
+        cooldown_days: Days to skip a player after they poll with no recent data.
+        cache:         {player_id: last_checked_date_str} dict, mutated in place —
+                       players are added on a no-data result and cleared on success.
+        schedule_map:  {team_id: game_hour_utc} dict derived from fetch_schedule,
+                       threaded through to scrape_player_data unchanged.
     """
     if cache is None:
         cache = {}
@@ -429,17 +409,14 @@ if __name__ == "__main__":
         process_game_lineup(g, queried_games_cache, today, schedule_map, all_players)
 
     no_data_cache = load_no_data_cache()
-    missing_team_cache = load_missing_team_cache()
     summary = compile_player_data(
         players=all_players,
         limit=MAX_PLAYERS,
         cooldown_days=args.cooldown_days,
         cache=no_data_cache,
-        missing_team_cache=missing_team_cache,
         schedule_map=schedule_map,
     )
     save_no_data_cache(no_data_cache)
-    save_missing_team_cache(missing_team_cache)
     save_queried_games_cache(queried_games_cache)
 
     probable_hitters(summary, n=5)
