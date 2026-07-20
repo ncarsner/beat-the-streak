@@ -7,8 +7,6 @@ from prettytable import PrettyTable
 from time import sleep
 import random
 
-from players import hitters
-from teams import TEAM_CROSSWALK
 
 
 # MLB Stats API — official, free JSON API; no scraping, no bot-blocking
@@ -31,41 +29,6 @@ SCHEDULE_ERROR_LOG_FILE = Path(__file__).parent / ".cache" / "schedule_fetch_err
 # game log won't have accumulated in less time than this. Overridable per
 # run via `--cooldown-days`.
 DEFAULT_COOLDOWN_DAYS = 7
-
-
-selected_hitters = [  # narrow hitters
-    "Luis Arraez",
-    "Mookie Betts",
-    "Xander Bogaerts",
-    "Manny Machado",
-    "Jonathan India",
-    "Elly De La Cruz",
-    "Tyler Stephenson",
-    "TJ Friedl",
-    "Ty France",
-    "Jeimer Candelario",
-    "Xavier Edwards",
-    "Jake Burger",
-    "Jonah Bride",
-    "LaMonte Wade Jr",
-    "Heliot Ramos",
-    "Michael Conforto",
-    "CJ Abrams",
-    "George Springer",
-    "Vladimir Guerrero Jr",
-    "Ernie Clement",
-    "Jackson Chourio",
-    "Austin Riley",
-    "Matt Olson",
-    "Masyn Winn",
-    "Bobby Witt Jr",
-]
-
-# Subset of hitters filters from selected_hitters list
-selected_hitters = {key: hitters[key] for key in selected_hitters if key in hitters}
-
-# Cache player-ID lookups so the search endpoint is only hit once per name per run
-_player_id_cache: dict = {}
 
 
 def load_no_data_cache(path=NO_DATA_CACHE_FILE):
@@ -203,29 +166,6 @@ def is_in_cooldown(player, cache, cooldown_days):
     return (datetime.now() - last_checked_date) < timedelta(days=cooldown_days)
 
 
-def lookup_player_info(name: str) -> dict | None:
-    """Return {id, team_name} for *name* from the MLB Stats API, or None if not found."""
-    if name in _player_id_cache:
-        return _player_id_cache[name]
-    try:
-        resp = requests.get(
-            f"{MLB_API_BASE}/people/search",
-            params={"names": name, "hydrate": "currentTeam"},
-            timeout=5,
-        )
-        resp.raise_for_status()
-        people = resp.json().get("people", [])
-        if people:
-            person = people[0]
-            current_team = person.get("currentTeam") or {}
-            result = {"id": person["id"], "team_name": current_team.get("name")}
-            _player_id_cache[name] = result
-            return result
-    except requests.RequestException:
-        pass
-    return None
-
-
 def is_within_past_week(date_str):
     date_obj = datetime.strptime(date_str, "%Y-%m-%d")
     one_week_ago = datetime.now() - timedelta(days=7)
@@ -242,79 +182,8 @@ def binomial_probability(ab, h, bb):
 
 
 def scrape_player_data(player, _url, missing_team_cache=None, schedule_map=None):
-    """Fetch last-5-game batting stats for *player* from the MLB Stats API."""
-    season = datetime.today().year
-    player_info = lookup_player_info(player)
-    if not player_info:
-        return None
-    player_id = player_info["id"]
-    team_name = player_info.get("team_name")
-    team_abbr = ""
-    team_id = None
-    if team_name:
-        crosswalk_entry = TEAM_CROSSWALK.get(team_name)
-        if crosswalk_entry:
-            team_abbr = crosswalk_entry["abbreviation"]
-            team_id = crosswalk_entry["id"]
-            if missing_team_cache is not None and team_name in missing_team_cache:
-                del missing_team_cache[team_name]
-        else:
-            if missing_team_cache is not None:
-                today = datetime.now().strftime("%Y-%m-%d")
-                if team_name not in missing_team_cache:
-                    missing_team_cache[team_name] = {"first_seen": today, "players": []}
-                if player not in missing_team_cache[team_name]["players"]:
-                    missing_team_cache[team_name]["players"].append(player)
-
-    try:
-        resp = requests.get(
-            f"{MLB_API_BASE}/people/{player_id}/stats",
-            params={
-                "stats": "gameLog",
-                "group": "hitting",
-                "season": season,
-                "gameType": "R",
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        print(f"connection error ({exc})")
-        return None
-
-    stats_list = resp.json().get("stats", [])
-    if not stats_list:
-        return None
-    splits = stats_list[0].get("splits", [])
-    if not splits:
-        return None
-
-    # splits are ordered oldest → newest; take the last 5 games
-    last5 = splits[-5:]
-
-    last_date_str = last5[-1].get("date", "")
-    if not last_date_str or not is_within_past_week(last_date_str):
-        return None
-
-    at_bats = sum(g["stat"].get("atBats", 0) for g in last5)
-    hits = sum(g["stat"].get("hits", 0) for g in last5)
-    walks = sum(g["stat"].get("baseOnBalls", 0) for g in last5)
-    strikeouts = sum(g["stat"].get("strikeOuts", 0) for g in last5)
-
-    game_hour = (
-        schedule_map.get(team_id)
-        if (schedule_map is not None and team_id is not None)
-        else None
-    )
-    return {
-        "Player": player,
-        "Team": team_abbr,
-        "At Bats": at_bats,
-        "Hits": hits,
-        "Walks": walks,
-        "Strikeouts": strikeouts,
-        "GameHourUTC": game_hour,
-    }
+    # Placeholder: reworked in the id-based-lineup-input task (priority 7).
+    return None
 
 
 def compile_player_data(
@@ -459,7 +328,7 @@ if __name__ == "__main__":
     no_data_cache = load_no_data_cache()
     missing_team_cache = load_missing_team_cache()
     summary = compile_player_data(
-        players=hitters,
+        players={},
         limit=MAX_PLAYERS,
         cooldown_days=args.cooldown_days,
         cache=no_data_cache,

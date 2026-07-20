@@ -6,8 +6,6 @@ import main
 from main import (
     is_within_past_week,
     binomial_probability,
-    lookup_player_info,
-    scrape_player_data,
     compile_player_data,
     load_no_data_cache,
     save_no_data_cache,
@@ -35,37 +33,6 @@ class FakeResponse:
 
     def json(self):
         return self._json_data
-
-
-@pytest.fixture(autouse=True)
-def clear_player_id_cache():
-    main._player_id_cache.clear()
-    yield
-    main._player_id_cache.clear()
-
-
-def _recent_date():
-    return (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-
-
-def _game(date_str, at_bats=3, hits=2, bb=1, so=0):
-    return {
-        "date": date_str,
-        "stat": {"atBats": at_bats, "hits": hits, "baseOnBalls": bb, "strikeOuts": so},
-    }
-
-
-def _make_stats_get(stats_payload):
-    """Fake requests.get that answers the id-lookup then the stats endpoint."""
-
-    def fake_get(url, params=None, timeout=None):
-        if url.endswith("/people/search"):
-            return FakeResponse(
-                {"people": [{"id": 1, "currentTeam": {"name": "Test Team"}}]}
-            )
-        return FakeResponse(stats_payload)
-
-    return fake_get
 
 
 # ---- is_within_past_week ----
@@ -100,124 +67,6 @@ def test_is_within_past_week(days_ago, expected):
 )
 def test_binomial_probability(ab, h, bb, expected):
     assert binomial_probability(ab, h, bb) == pytest.approx(expected)
-
-
-# ---- lookup_player_info ----
-
-
-def test_lookup_player_info_found(monkeypatch):
-    monkeypatch.setattr(
-        requests,
-        "get",
-        lambda *a, **kw: FakeResponse(
-            {"people": [{"id": 42, "currentTeam": {"name": "Test Team"}}]}
-        ),
-    )
-    result = lookup_player_info("Test Player")
-    assert result == {"id": 42, "team_name": "Test Team"}
-
-
-def test_lookup_player_info_no_current_team(monkeypatch):
-    monkeypatch.setattr(
-        requests, "get", lambda *a, **kw: FakeResponse({"people": [{"id": 42}]})
-    )
-    result = lookup_player_info("Test Player")
-    assert result == {"id": 42, "team_name": None}
-
-
-def test_lookup_player_info_not_found(monkeypatch):
-    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse({"people": []}))
-    assert lookup_player_info("Nobody") is None
-
-
-def test_lookup_player_info_caches_after_first_call(monkeypatch):
-    calls = []
-
-    def fake_get(*a, **kw):
-        calls.append(1)
-        return FakeResponse({"people": [{"id": 7, "currentTeam": {"name": "Team A"}}]})
-
-    monkeypatch.setattr(requests, "get", fake_get)
-    assert lookup_player_info("Cached Player") == {"id": 7, "team_name": "Team A"}
-    assert lookup_player_info("Cached Player") == {"id": 7, "team_name": "Team A"}
-    assert len(calls) == 1
-
-
-def test_lookup_player_info_request_exception(monkeypatch):
-    def fake_get(*a, **kw):
-        raise requests.RequestException("boom")
-
-    monkeypatch.setattr(requests, "get", fake_get)
-    assert lookup_player_info("Whoever") is None
-
-
-# ---- scrape_player_data ----
-# Regression coverage for the stats-endpoint returning a present-but-empty
-# "stats" list, which used to raise an uncaught IndexError before any
-# guard existed around the JSON shape.
-
-
-@pytest.mark.parametrize(
-    "stats_payload",
-    [
-        {"stats": []},
-        {"stats": [{}]},
-        {"stats": [{"splits": []}]},
-        {},
-    ],
-    ids=["empty-stats-list", "no-splits-key", "empty-splits", "no-stats-key"],
-)
-def test_scrape_player_data_handles_missing_or_empty_stats(monkeypatch, stats_payload):
-    monkeypatch.setattr(requests, "get", _make_stats_get(stats_payload))
-    assert scrape_player_data("Test Player", "unused") is None
-
-
-def test_scrape_player_data_stale_last_game_returns_none(monkeypatch):
-    old_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-    payload = {"stats": [{"splits": [_game(old_date)]}]}
-    monkeypatch.setattr(requests, "get", _make_stats_get(payload))
-    assert scrape_player_data("Test Player", "unused") is None
-
-
-def test_scrape_player_data_success(monkeypatch):
-    date_str = _recent_date()
-    payload = {
-        "stats": [
-            {
-                "splits": [
-                    _game(date_str, at_bats=3, hits=2, bb=1, so=0),
-                    _game(date_str, at_bats=4, hits=1, bb=0, so=1),
-                    _game(date_str, at_bats=2, hits=0, bb=1, so=2),
-                ]
-            }
-        ]
-    }
-    monkeypatch.setattr(requests, "get", _make_stats_get(payload))
-    result = scrape_player_data("Test Player", "unused")
-    assert result == {
-        "Player": "Test Player",
-        "Team": "",  # "Test Team" is not in TEAM_CROSSWALK
-        "At Bats": 9,
-        "Hits": 3,
-        "Walks": 2,
-        "Strikeouts": 3,
-        "GameHourUTC": None,
-    }
-
-
-def test_scrape_player_data_no_player_id(monkeypatch):
-    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse({"people": []}))
-    assert scrape_player_data("Unknown Player", "unused") is None
-
-
-def test_scrape_player_data_request_exception(monkeypatch):
-    def fake_get(url, params=None, timeout=None):
-        if url.endswith("/people/search"):
-            return FakeResponse({"people": [{"id": 1}]})
-        raise requests.RequestException("network down")
-
-    monkeypatch.setattr(requests, "get", fake_get)
-    assert scrape_player_data("Test Player", "unused") is None
 
 
 # ---- compile_player_data ----
@@ -390,70 +239,6 @@ def test_save_and_load_missing_team_cache_roundtrip(tmp_path):
     cache = {"Unknown FC": {"first_seen": "2026-07-13", "players": ["Alice"]}}
     save_missing_team_cache(cache, cache_file)
     assert load_missing_team_cache(cache_file) == cache
-
-
-# ---- missing-team cache: crosswalk-miss logging ----
-
-
-def _make_empty_stats_get(monkeypatch):
-    """Patch requests.get so /stats returns no splits (scrape returns None quickly)."""
-
-    def fake_get(url, params=None, timeout=None):
-        return FakeResponse({"stats": []})
-
-    monkeypatch.setattr(requests, "get", fake_get)
-
-
-def test_scrape_player_data_logs_crosswalk_miss(monkeypatch):
-    """team_name present but not in crosswalk → entry written to missing_team_cache."""
-    monkeypatch.setattr(
-        main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Unknown Team"}
-    )
-    _make_empty_stats_get(monkeypatch)
-
-    missing = {}
-    scrape_player_data("Alice", "unused", missing)
-    assert "Unknown Team" in missing
-    assert missing["Unknown Team"]["players"] == ["Alice"]
-    assert "first_seen" in missing["Unknown Team"]
-
-
-def test_scrape_player_data_no_log_when_team_name_is_none(monkeypatch):
-    """No currentTeam (team_name is None) → missing_team_cache untouched."""
-    monkeypatch.setattr(
-        main, "lookup_player_info", lambda name: {"id": 1, "team_name": None}
-    )
-    _make_empty_stats_get(monkeypatch)
-
-    missing = {}
-    scrape_player_data("Bob", "unused", missing)
-    assert missing == {}
-
-
-def test_scrape_player_data_crosswalk_miss_deduplicates_player(monkeypatch):
-    """Calling scrape twice for the same player/team does not duplicate the name."""
-    monkeypatch.setattr(
-        main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Ghost Team"}
-    )
-    _make_empty_stats_get(monkeypatch)
-
-    missing = {}
-    scrape_player_data("Carol", "unused", missing)
-    scrape_player_data("Carol", "unused", missing)
-    assert missing["Ghost Team"]["players"] == ["Carol"]
-
-
-def test_scrape_player_data_crosswalk_miss_appends_different_players(monkeypatch):
-    """Two different players with the same unknown team → both names listed."""
-    monkeypatch.setattr(
-        main, "lookup_player_info", lambda name: {"id": 1, "team_name": "Ghost Team"}
-    )
-    _make_empty_stats_get(monkeypatch)
-
-    missing = {}
-    scrape_player_data("Dave", "unused", missing)
-    scrape_player_data("Eve", "unused", missing)
-    assert set(missing["Ghost Team"]["players"]) == {"Dave", "Eve"}
 
 
 # ---- fetch_schedule ----
