@@ -8,6 +8,7 @@ from main import (
     is_within_past_week,
     binomial_probability,
     compile_player_data,
+    scrape_player_data,
     load_no_data_cache,
     save_no_data_cache,
     load_missing_team_cache,
@@ -73,21 +74,25 @@ def test_binomial_probability(ab, h, bb, expected):
 # ---- compile_player_data ----
 
 
+def _make_player(name: str, pid: int = 1, team_id: int = 119) -> dict:
+    return {"id": pid, "fullName": name, "team_id": team_id}
+
+
 @pytest.mark.parametrize("limit, expected_count", [(0, 0), (1, 1), (3, 3), (None, 5)])
 def test_compile_player_data_respects_limit(monkeypatch, limit, expected_count):
     monkeypatch.setattr(main, "sleep", lambda _: None)
     monkeypatch.setattr(
         main,
         "scrape_player_data",
-        lambda player, url, missing_team_cache=None, schedule_map=None: {
-            "Player": player,
+        lambda player_id, player_name, team_id, schedule_map=None: {
+            "Player": player_name,
             "At Bats": 10,
             "Hits": 5,
             "Walks": 1,
             "Strikeouts": 2,
         },
     )
-    players = {f"Player{i}": f"p/player{i}.shtml" for i in range(5)}
+    players = [_make_player(f"Player{i}", pid=i) for i in range(5)]
     result = compile_player_data(players, limit=limit)
     assert len(result) == expected_count
 
@@ -95,21 +100,31 @@ def test_compile_player_data_respects_limit(monkeypatch, limit, expected_count):
 def test_compile_player_data_skips_none_and_zero_at_bats(monkeypatch):
     monkeypatch.setattr(main, "sleep", lambda _: None)
 
-    def fake_scrape(player, url, missing_team_cache=None, schedule_map=None):
-        if player == "NoData":
+    def fake_scrape(player_id, player_name, team_id, schedule_map=None):
+        if player_name == "NoData":
             return None
-        if player == "ZeroAtBats":
+        if player_name == "ZeroAtBats":
             return {
-                "Player": player,
+                "Player": player_name,
                 "At Bats": 0,
                 "Hits": 0,
                 "Walks": 0,
                 "Strikeouts": 0,
             }
-        return {"Player": player, "At Bats": 10, "Hits": 5, "Walks": 1, "Strikeouts": 2}
+        return {
+            "Player": player_name,
+            "At Bats": 10,
+            "Hits": 5,
+            "Walks": 1,
+            "Strikeouts": 2,
+        }
 
     monkeypatch.setattr(main, "scrape_player_data", fake_scrape)
-    players = {"NoData": "a", "ZeroAtBats": "b", "Active": "c"}
+    players = [
+        _make_player("NoData", 1),
+        _make_player("ZeroAtBats", 2),
+        _make_player("Active", 3),
+    ]
     result = compile_player_data(players, limit=None)
     assert [p["Player"] for p in result] == ["Active"]
 
@@ -166,15 +181,21 @@ def test_compile_player_data_skips_player_in_cooldown(monkeypatch):
     monkeypatch.setattr(main, "sleep", lambda _: None)
     scrape_calls = []
 
-    def fake_scrape(player, url, missing_team_cache=None, schedule_map=None):
-        scrape_calls.append(player)
-        return {"Player": player, "At Bats": 10, "Hits": 5, "Walks": 1, "Strikeouts": 2}
+    def fake_scrape(player_id, player_name, team_id, schedule_map=None):
+        scrape_calls.append(player_name)
+        return {
+            "Player": player_name,
+            "At Bats": 10,
+            "Hits": 5,
+            "Walks": 1,
+            "Strikeouts": 2,
+        }
 
     monkeypatch.setattr(main, "scrape_player_data", fake_scrape)
 
     recent = datetime.now().strftime("%Y-%m-%d")
     cache = {"OnCooldown": recent}
-    players = {"OnCooldown": "a", "Fetchable": "b"}
+    players = [_make_player("OnCooldown", 1), _make_player("Fetchable", 2)]
     result = compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
 
     assert scrape_calls == ["Fetchable"]
@@ -189,11 +210,11 @@ def test_compile_player_data_adds_player_to_cache_on_no_data(monkeypatch):
     monkeypatch.setattr(
         main,
         "scrape_player_data",
-        lambda player, url, missing_team_cache=None, schedule_map=None: None,
+        lambda player_id, player_name, team_id, schedule_map=None: None,
     )
 
     cache = {}
-    players = {"NoData": "a"}
+    players = [_make_player("NoData", 1)]
     compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
 
     assert "NoData" in cache
@@ -205,8 +226,8 @@ def test_compile_player_data_clears_cache_entry_on_success(monkeypatch):
     monkeypatch.setattr(
         main,
         "scrape_player_data",
-        lambda player, url, missing_team_cache=None, schedule_map=None: {
-            "Player": player,
+        lambda player_id, player_name, team_id, schedule_map=None: {
+            "Player": player_name,
             "At Bats": 10,
             "Hits": 5,
             "Walks": 1,
@@ -216,7 +237,7 @@ def test_compile_player_data_clears_cache_entry_on_success(monkeypatch):
 
     stale_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
     cache = {"Recovered": stale_date}
-    players = {"Recovered": "a"}
+    players = [_make_player("Recovered", 1)]
     compile_player_data(players, limit=None, cooldown_days=7, cache=cache)
 
     assert "Recovered" not in cache
@@ -546,3 +567,121 @@ def test_build_arg_parser_mode_not_recognized():
 )
 def test_team_id_to_abbr_all_30_teams(team_id, expected_abbr):
     assert TEAM_ID_TO_ABBR[team_id] == expected_abbr
+
+
+# ---- scrape_player_data ----
+
+
+def _make_stats_payload(splits: list[dict]) -> dict:
+    return {"stats": [{"splits": splits}]}
+
+
+def _make_split(
+    date: str, at_bats: int = 3, hits: int = 1, walks: int = 0, strikeouts: int = 1
+) -> dict:
+    return {
+        "date": date,
+        "stat": {
+            "atBats": at_bats,
+            "hits": hits,
+            "baseOnBalls": walks,
+            "strikeOuts": strikeouts,
+        },
+    }
+
+
+def _recent_date(days_ago: int = 1) -> str:
+    return (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+
+
+def test_scrape_player_data_returns_correct_shape(monkeypatch):
+    splits = [
+        _make_split(_recent_date(i), at_bats=4, hits=2, walks=1, strikeouts=1)
+        for i in range(1, 4)
+    ]
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse(_make_stats_payload(splits))
+    )
+    result = scrape_player_data(664034, "Freddie Freeman", 119)
+    assert result is not None
+    assert result["Player"] == "Freddie Freeman"
+    assert result["Team"] == "LAD"
+    assert result["At Bats"] == 12
+    assert result["Hits"] == 6
+    assert result["Walks"] == 3
+    assert result["Strikeouts"] == 3
+    assert result["GameHourUTC"] is None
+
+
+def test_scrape_player_data_uses_schedule_map(monkeypatch):
+    splits = [_make_split(_recent_date(1))]
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse(_make_stats_payload(splits))
+    )
+    result = scrape_player_data(664034, "Freddie Freeman", 119, schedule_map={119: 19})
+    assert result is not None
+    assert result["GameHourUTC"] == 19
+
+
+def test_scrape_player_data_unknown_team_id_uses_fallback(monkeypatch):
+    splits = [_make_split(_recent_date(1))]
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse(_make_stats_payload(splits))
+    )
+    result = scrape_player_data(999999, "Unknown Player", 9999)
+    assert result is not None
+    assert result["Team"] == "???"
+
+
+def test_scrape_player_data_empty_stats_list_returns_none(monkeypatch):
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse({"stats": []}))
+    assert scrape_player_data(664034, "Freddie Freeman", 119) is None
+
+
+def test_scrape_player_data_empty_splits_returns_none(monkeypatch):
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse(_make_stats_payload([]))
+    )
+    assert scrape_player_data(664034, "Freddie Freeman", 119) is None
+
+
+def test_scrape_player_data_stale_last_game_returns_none(monkeypatch):
+    stale_split = _make_split(
+        (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    )
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *a, **kw: FakeResponse(_make_stats_payload([stale_split])),
+    )
+    assert scrape_player_data(664034, "Freddie Freeman", 119) is None
+
+
+def test_scrape_player_data_request_exception_returns_none(monkeypatch):
+    def fake_get(*a, **kw):
+        raise requests.RequestException("timeout")
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    assert scrape_player_data(664034, "Freddie Freeman", 119) is None
+
+
+def test_scrape_player_data_non_2xx_returns_none(monkeypatch):
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse({}, status_code=500)
+    )
+    assert scrape_player_data(664034, "Freddie Freeman", 119) is None
+
+
+def test_scrape_player_data_uses_last_5_splits(monkeypatch):
+    # 7 splits, only last 5 should be counted
+    splits = [_make_split(_recent_date(i), at_bats=1, hits=0) for i in range(7, 0, -1)]
+    # Override last 5 to have hits
+    for s in splits[-5:]:
+        s["stat"]["hits"] = 1
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse(_make_stats_payload(splits))
+    )
+    result = scrape_player_data(664034, "Freddie Freeman", 119)
+    assert result is not None
+    assert result["At Bats"] == 5
+    assert result["Hits"] == 5

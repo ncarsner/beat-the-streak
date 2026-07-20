@@ -7,6 +7,7 @@ from prettytable import PrettyTable
 from time import sleep
 import random
 
+from teams import TEAM_ID_TO_ABBR
 
 
 # MLB Stats API — official, free JSON API; no scraping, no bot-blocking
@@ -181,13 +182,64 @@ def binomial_probability(ab, h, bb):
     return 1 - (1 - avg) ** exp
 
 
-def scrape_player_data(player, _url, missing_team_cache=None, schedule_map=None):
-    # Placeholder: reworked in the id-based-lineup-input task (priority 7).
-    return None
+def scrape_player_data(
+    player_id: int,
+    player_name: str,
+    team_id: int,
+    schedule_map: dict | None = None,
+) -> dict | None:
+    """Fetch last-5-game batting stats for *player_name* from the MLB Stats API."""
+    season = datetime.today().year
+    team_abbr = TEAM_ID_TO_ABBR.get(team_id, "???")
+
+    try:
+        resp = requests.get(
+            f"{MLB_API_BASE}/people/{player_id}/stats",
+            params={
+                "stats": "gameLog",
+                "group": "hitting",
+                "season": season,
+                "gameType": "R",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"connection error ({exc})")
+        return None
+
+    stats_list = resp.json().get("stats", [])
+    if not stats_list:
+        return None
+    splits = stats_list[0].get("splits", [])
+    if not splits:
+        return None
+
+    # splits ordered oldest → newest; take the last 5 games
+    last5 = splits[-5:]
+    last_date_str = last5[-1].get("date", "")
+    if not last_date_str or not is_within_past_week(last_date_str):
+        return None
+
+    at_bats = sum(g["stat"].get("atBats", 0) for g in last5)
+    hits = sum(g["stat"].get("hits", 0) for g in last5)
+    walks = sum(g["stat"].get("baseOnBalls", 0) for g in last5)
+    strikeouts = sum(g["stat"].get("strikeOuts", 0) for g in last5)
+
+    game_hour = schedule_map.get(team_id) if schedule_map is not None else None
+    return {
+        "Player": player_name,
+        "Team": team_abbr,
+        "At Bats": at_bats,
+        "Hits": hits,
+        "Walks": walks,
+        "Strikeouts": strikeouts,
+        "GameHourUTC": game_hour,
+    }
 
 
 def compile_player_data(
-    players,
+    players: list[dict],
     limit: int | None = MAX_PLAYERS,
     cooldown_days=DEFAULT_COOLDOWN_DAYS,
     cache=None,
@@ -197,14 +249,13 @@ def compile_player_data(
     """Fetch and aggregate batting stats for each player.
 
     Args:
-        players:            Mapping of player name → value (value is unused; names drive lookups).
+        players:            List of player dicts with {id, fullName, team_id} from lineup fetch.
         limit:              Maximum number of players to process.  Pass ``None`` to
                             process the entire pool.  Defaults to ``MAX_PLAYERS``.
         cooldown_days:      Days to skip a player after they poll with no recent data.
-        cache:              {player: last_checked_date_str} dict, mutated in place —
+        cache:              {player_name: last_checked_date_str} dict, mutated in place —
                             players are added on a no-data result and cleared on success.
-        missing_team_cache: {team_name: {first_seen, players}} dict, mutated in place —
-                            updated when a player's team_name is not found in TEAM_CROSSWALK.
+        missing_team_cache: Retained for task-10 cleanup; unused by this function.
         schedule_map:       {team_id: game_hour_utc} dict derived from fetch_schedule,
                             threaded through to scrape_player_data unchanged.
     """
@@ -212,32 +263,29 @@ def compile_player_data(
         cache = {}
 
     summary_data = []
-    player_list = list(players.items())
-    if limit is not None:
-        player_list = player_list[:limit]
+    player_list = players if limit is None else players[:limit]
     total = len(player_list)
 
-    for i, (player, url) in enumerate(player_list, 1):
-        if is_in_cooldown(player, cache, cooldown_days):
+    for i, player in enumerate(player_list, 1):
+        name = player["fullName"]
+        if is_in_cooldown(name, cache, cooldown_days):
             continue
 
-        print(f"[{i}/{total}] Fetching {player} ...", end=" ", flush=True)
-        player_data = scrape_player_data(player, url, missing_team_cache, schedule_map)
+        print(f"[{i}/{total}] Fetching {name} ...", end=" ", flush=True)
+        player_data = scrape_player_data(
+            player["id"], name, player["team_id"], schedule_map
+        )
 
-        # Validates data returned and that at-bats are non-zero before computing probability
-        # (and, optionally) if player's walks >= strikeouts
-        if (
-            player_data and player_data["At Bats"] > 0
-        ):  # and player_data["Walks"] >= player_data["Strikeouts"]:
+        if player_data and player_data["At Bats"] > 0:
             player_data["probability"] = binomial_probability(
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
             summary_data.append(player_data)
             print(f"ok  ({player_data['Hits']}-{player_data['At Bats']})")
-            cache.pop(player, None)
+            cache.pop(name, None)
         else:
             print("skipped (no recent data)")
-            cache[player] = datetime.now().strftime("%Y-%m-%d")
+            cache[name] = datetime.now().strftime("%Y-%m-%d")
         sleep(random.uniform(0.6, 1.8))
 
     return summary_data
@@ -320,15 +368,19 @@ if __name__ == "__main__":
     selected = select_games(games, now, scheduled=args.scheduled)
 
     schedule_map = {}
+    all_players: list[dict] = []
     for g in selected:
         hour = g["start_dt"].hour
         schedule_map[g["home_team_id"]] = hour
         schedule_map[g["away_team_id"]] = hour
+        lineup = fetch_lineup(g["gamePk"])
+        all_players.extend(lineup["home"])
+        all_players.extend(lineup["away"])
 
     no_data_cache = load_no_data_cache()
     missing_team_cache = load_missing_team_cache()
     summary = compile_player_data(
-        players={},
+        players=all_players,
         limit=MAX_PLAYERS,
         cooldown_days=args.cooldown_days,
         cache=no_data_cache,
