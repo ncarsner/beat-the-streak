@@ -3,6 +3,7 @@ import requests
 from datetime import datetime, timedelta
 
 import main
+from teams import TEAM_CROSSWALK, TEAM_ID_TO_ABBR
 from main import (
     is_within_past_week,
     binomial_probability,
@@ -534,3 +535,14 @@ def test_build_arg_parser_mode_not_recognized():
 
     with pytest.raises(SystemExit):
         build_arg_parser().parse_args(["--mode", "full"])
+
+
+# ---- TEAM_ID_TO_ABBR ----
+
+
+@pytest.mark.parametrize(
+    "team_id, expected_abbr",
+    [(info["id"], info["abbreviation"]) for info in TEAM_CROSSWALK.values()],
+)
+def test_team_id_to_abbr_all_30_teams(team_id, expected_abbr):
+    assert TEAM_ID_TO_ABBR[team_id] == expected_abbr
