@@ -23,6 +23,9 @@ NO_DATA_CACHE_FILE = Path(__file__).parent / ".cache" / "no_data_cache.json"
 # Where crosswalk misses are persisted for later review.
 MISSING_TEAM_CACHE_FILE = Path(__file__).parent / ".cache" / "missing_team_cache.json"
 
+# Where per-game lineup queries are recorded to avoid re-querying on the same day.
+QUERIED_GAMES_CACHE_FILE = Path(__file__).parent / ".cache" / "queried_games_cache.json"
+
 # Where /schedule request failures are logged for later review.
 SCHEDULE_ERROR_LOG_FILE = Path(__file__).parent / ".cache" / "schedule_fetch_errors.log"
 
@@ -45,6 +48,26 @@ def save_no_data_cache(cache, path=NO_DATA_CACHE_FILE):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(cache, f, indent=2, sort_keys=True)
+
+
+def load_queried_games_cache(path=QUERIED_GAMES_CACHE_FILE):
+    """Return the {gamePk_str: date_str} cache from a prior run, or {} if absent/corrupt."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_queried_games_cache(cache, path=QUERIED_GAMES_CACHE_FILE):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(cache, f, indent=2, sort_keys=True)
+
+
+def is_game_queried_today(game_pk: int, cache: dict, today: str) -> bool:
+    """True if *game_pk* was already queried on *today*."""
+    return cache.get(str(game_pk)) == today
 
 
 def load_missing_team_cache(path=MISSING_TEAM_CACHE_FILE):
@@ -238,6 +261,37 @@ def scrape_player_data(
     }
 
 
+def process_game_lineup(
+    g: dict,
+    queried_games_cache: dict,
+    today: str,
+    schedule_map: dict,
+    all_players: list,
+) -> bool:
+    """Fetch and record lineup for *g* unless already queried today.
+
+    Marks the game as queried only when the lineup is posted (non-empty), so
+    a pre-lineup cron firing does not block a later firing from picking up the
+    posted lineup.
+
+    Returns True if a lineup fetch was attempted, False if the game was skipped.
+    """
+    game_pk = g["gamePk"]
+    if is_game_queried_today(game_pk, queried_games_cache, today):
+        return False
+    lineup = fetch_lineup(game_pk)
+    if lineup["home"] or lineup["away"]:
+        hour = g["start_dt"].hour
+        schedule_map[g["home_team_id"]] = hour
+        schedule_map[g["away_team_id"]] = hour
+        all_players.extend(lineup["home"])
+        all_players.extend(lineup["away"])
+        # Only mark after a posted lineup so a subsequent run can still pull it
+        # once it posts.
+        queried_games_cache[str(game_pk)] = today
+    return True
+
+
 def compile_player_data(
     players: list[dict],
     limit: int | None = MAX_PLAYERS,
@@ -369,13 +423,9 @@ if __name__ == "__main__":
 
     schedule_map = {}
     all_players: list[dict] = []
+    queried_games_cache = load_queried_games_cache()
     for g in selected:
-        hour = g["start_dt"].hour
-        schedule_map[g["home_team_id"]] = hour
-        schedule_map[g["away_team_id"]] = hour
-        lineup = fetch_lineup(g["gamePk"])
-        all_players.extend(lineup["home"])
-        all_players.extend(lineup["away"])
+        process_game_lineup(g, queried_games_cache, today, schedule_map, all_players)
 
     no_data_cache = load_no_data_cache()
     missing_team_cache = load_missing_team_cache()
@@ -389,5 +439,6 @@ if __name__ == "__main__":
     )
     save_no_data_cache(no_data_cache)
     save_missing_team_cache(missing_team_cache)
+    save_queried_games_cache(queried_games_cache)
 
     probable_hitters(summary, n=5)
