@@ -24,6 +24,7 @@ from main import (
     group_picks_by_start_time,
     format_sms_body,
     send_sms_notification,
+    dispatch_scheduled_sms,
     build_arg_parser,
     DEFAULT_COOLDOWN_DAYS,
 )
@@ -975,3 +976,82 @@ def test_send_sms_notification_does_not_raise_on_failure(monkeypatch):
         send_sms_notification([_ranked_entry("P1", 0.7)], 19, **_CREDS)
     except Exception as exc:
         pytest.fail(f"send_sms_notification raised unexpectedly: {exc}")
+
+
+# ---- dispatch_scheduled_sms ----
+
+
+def test_dispatch_scheduled_sms_calls_send_per_grouping(monkeypatch):
+    calls = []
+
+    def fake_send(ranked, game_hour, *args, **kwargs):
+        calls.append(game_hour)
+        return True
+
+    monkeypatch.setattr(main, "send_sms_notification", fake_send)
+    summary = [
+        _summary_entry("P1", 0.8, game_hour=18),
+        _summary_entry("P2", 0.7, game_hour=19),
+    ]
+    dispatch_scheduled_sms(summary)
+    assert sorted(calls) == [18, 19]
+
+
+def test_dispatch_scheduled_sms_empty_summary_no_send(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        main, "send_sms_notification", lambda *a, **kw: calls.append(True)
+    )
+    dispatch_scheduled_sms([])
+    assert calls == []
+
+
+# ---- run: scheduled gate ----
+
+
+def _fake_args(scheduled=False, cooldown_days=DEFAULT_COOLDOWN_DAYS):
+    import argparse
+
+    return argparse.Namespace(scheduled=scheduled, cooldown_days=cooldown_days)
+
+
+def _patch_run_io(monkeypatch, summary_data):
+    """Stub all I/O in run() so tests touch neither disk nor network."""
+    monkeypatch.setattr(main, "fetch_schedule", lambda date: [])
+    monkeypatch.setattr(main, "load_queried_games_cache", lambda: {})
+    monkeypatch.setattr(main, "load_no_data_cache", lambda: {})
+    monkeypatch.setattr(main, "save_no_data_cache", lambda cache: None)
+    monkeypatch.setattr(main, "save_queried_games_cache", lambda cache: None)
+    monkeypatch.setattr(main, "compile_player_data", lambda **kw: summary_data)
+    monkeypatch.setattr(main, "probable_hitters", lambda data, n=5: None)
+
+
+def test_run_manual_mode_does_not_send_sms_even_with_players(monkeypatch):
+    sms_calls = []
+    summary = [_summary_entry("P1", 0.8, game_hour=19)]
+    _patch_run_io(monkeypatch, summary)
+    monkeypatch.setattr(
+        main, "send_sms_notification", lambda *a, **kw: sms_calls.append(True)
+    )
+    main.run(_fake_args(scheduled=False))
+    assert sms_calls == []
+
+
+def test_run_scheduled_mode_sends_sms_for_each_grouping(monkeypatch):
+    sms_calls = []
+    summary = [
+        _summary_entry("P1", 0.8, game_hour=18),
+        _summary_entry("P2", 0.7, game_hour=19),
+    ]
+    _patch_run_io(monkeypatch, summary)
+    monkeypatch.setattr(
+        main,
+        "send_sms_notification",
+        lambda ranked, hour, *a, **kw: sms_calls.append(hour),
+    )
+    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "sid")
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "tok")
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+10005551111")
+    monkeypatch.setenv("SUBSCRIBER_PHONE_NUMBER", "+10005552222")
+    main.run(_fake_args(scheduled=True))
+    assert sorted(sms_calls) == [18, 19]

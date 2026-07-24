@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import requests
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -431,6 +432,49 @@ def send_sms_notification(
     return True
 
 
+def dispatch_scheduled_sms(summary: list[dict]) -> None:
+    """Send per-grouping SMS notifications. Only called in --scheduled mode."""
+    grouped = group_picks_by_start_time(summary)
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    from_number = os.environ.get("TWILIO_FROM_NUMBER", "")
+    to_number = os.environ.get("SUBSCRIBER_PHONE_NUMBER", "")
+    for game_hour, ranked in grouped.items():
+        send_sms_notification(
+            ranked, game_hour, account_sid, auth_token, from_number, to_number
+        )
+
+
+def run(args: argparse.Namespace) -> None:
+    """Execute one full run with the given parsed arguments."""
+    today = datetime.today().strftime("%Y-%m-%d")
+    now = datetime.now(timezone.utc)
+    games = fetch_schedule(today)
+    selected = select_games(games, now, scheduled=args.scheduled)
+
+    schedule_map: dict = {}
+    all_players: list[dict] = []
+    queried_games_cache = load_queried_games_cache()
+    for g in selected:
+        process_game_lineup(g, queried_games_cache, today, schedule_map, all_players)
+
+    no_data_cache = load_no_data_cache()
+    summary = compile_player_data(
+        players=all_players,
+        limit=MAX_PLAYERS,
+        cooldown_days=args.cooldown_days,
+        cache=no_data_cache,
+        schedule_map=schedule_map,
+    )
+    save_no_data_cache(no_data_cache)
+    save_queried_games_cache(queried_games_cache)
+
+    probable_hitters(summary, n=5)
+
+    if args.scheduled:
+        dispatch_scheduled_sms(summary)
+
+
 def build_arg_parser():
     parser = argparse.ArgumentParser(
         description="Beat the Streak — hit-probability ranking tool"
@@ -453,28 +497,4 @@ def build_arg_parser():
 
 
 if __name__ == "__main__":
-    args = build_arg_parser().parse_args()
-
-    today = datetime.today().strftime("%Y-%m-%d")
-    now = datetime.now(timezone.utc)
-    games = fetch_schedule(today)
-    selected = select_games(games, now, scheduled=args.scheduled)
-
-    schedule_map = {}
-    all_players: list[dict] = []
-    queried_games_cache = load_queried_games_cache()
-    for g in selected:
-        process_game_lineup(g, queried_games_cache, today, schedule_map, all_players)
-
-    no_data_cache = load_no_data_cache()
-    summary = compile_player_data(
-        players=all_players,
-        limit=MAX_PLAYERS,
-        cooldown_days=args.cooldown_days,
-        cache=no_data_cache,
-        schedule_map=schedule_map,
-    )
-    save_no_data_cache(no_data_cache)
-    save_queried_games_cache(queried_games_cache)
-
-    probable_hitters(summary, n=5)
+    run(build_arg_parser().parse_args())
