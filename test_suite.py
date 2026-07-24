@@ -689,7 +689,10 @@ def test_load_queried_games_cache_corrupt_file_returns_empty_dict(tmp_path):
 
 def test_save_and_load_queried_games_cache_roundtrip(tmp_path):
     cache_file = tmp_path / "queried_games_cache.json"
-    cache = {"700001": "2026-07-20", "700002": "2026-07-20"}
+    cache = {
+        "700001": {"date": "2026-07-20", "players": [{"id": 1, "fullName": "A", "team_id": 119}]},
+        "700002": {"date": "2026-07-20", "players": []},
+    }
     save_queried_games_cache(cache, cache_file)
     assert load_queried_games_cache(cache_file) == cache
 
@@ -702,12 +705,12 @@ def test_is_game_queried_today_absent_returns_false():
 
 
 def test_is_game_queried_today_present_with_today_returns_true():
-    cache = {"700001": "2026-07-20"}
+    cache = {"700001": {"date": "2026-07-20", "players": []}}
     assert is_game_queried_today(700001, cache, "2026-07-20") is True
 
 
 def test_is_game_queried_today_stale_prior_day_returns_false():
-    cache = {"700001": "2026-07-19"}
+    cache = {"700001": {"date": "2026-07-19", "players": []}}
     assert is_game_queried_today(700001, cache, "2026-07-20") is False
 
 
@@ -736,7 +739,7 @@ def test_process_game_lineup_posted_marks_queried_and_adds_players(monkeypatch):
     result = process_game_lineup(g, cache, "2026-07-20", schedule_map, all_players)
 
     assert result is True
-    assert cache == {"700001": "2026-07-20"}
+    assert cache == {"700001": {"date": "2026-07-20", "players": home + away}}
     assert all_players == home + away
     assert schedule_map[119] == 19
     assert schedule_map[137] == 19
@@ -754,7 +757,7 @@ def test_process_game_lineup_not_posted_does_not_mark_queried(monkeypatch):
     assert all_players == []
 
 
-def test_process_game_lineup_already_queried_today_skips_fetch(monkeypatch):
+def test_process_game_lineup_already_queried_today_skips_fetch_but_reuses_players(monkeypatch):
     fetch_calls = []
 
     def fake_fetch(pk):
@@ -763,14 +766,17 @@ def test_process_game_lineup_already_queried_today_skips_fetch(monkeypatch):
 
     monkeypatch.setattr(main, "fetch_lineup", fake_fetch)
 
-    cache = {"700001": "2026-07-20"}
+    cached_players = [{"id": 111, "fullName": "Player 111", "team_id": 119}]
+    cache = {"700001": {"date": "2026-07-20", "players": cached_players}}
     schedule_map, all_players = {}, []
     g = _make_schedule_game()
     result = process_game_lineup(g, cache, "2026-07-20", schedule_map, all_players)
 
     assert result is False
     assert fetch_calls == []  # fetch_lineup was never called
-    assert all_players == []
+    assert all_players == cached_players  # cached players still surface in output
+    assert schedule_map[119] == 19
+    assert schedule_map[137] == 19
 
 
 def test_process_game_lineup_prior_day_entry_does_not_block(monkeypatch):
@@ -778,14 +784,15 @@ def test_process_game_lineup_prior_day_entry_does_not_block(monkeypatch):
     away = [{"id": 222, "fullName": "Player 222", "team_id": 137}]
     monkeypatch.setattr(main, "fetch_lineup", lambda pk: {"home": home, "away": away})
 
-    cache = {"700001": "2026-07-19"}  # stale — yesterday
+    stale_players = [{"id": 999, "fullName": "Stale Player", "team_id": 119}]
+    cache = {"700001": {"date": "2026-07-19", "players": stale_players}}  # stale — yesterday
     schedule_map, all_players = {}, []
     g = _make_schedule_game()
     result = process_game_lineup(g, cache, "2026-07-20", schedule_map, all_players)
 
     assert result is True
-    assert cache == {"700001": "2026-07-20"}  # overwritten with today
-    assert all_players == home + away
+    assert cache == {"700001": {"date": "2026-07-20", "players": home + away}}  # overwritten with today
+    assert all_players == home + away  # fresh fetch, not the stale cached players
 
 
 # ---- group_picks_by_start_time ----

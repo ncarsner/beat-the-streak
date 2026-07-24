@@ -52,7 +52,7 @@ def save_no_data_cache(cache, path=NO_DATA_CACHE_FILE):
 
 
 def load_queried_games_cache(path=QUERIED_GAMES_CACHE_FILE):
-    """Return the {gamePk_str: date_str} cache from a prior run, or {} if absent/corrupt."""
+    """Return the {gamePk_str: {"date": ..., "players": [...]}} cache from a prior run, or {} if absent/corrupt."""
     try:
         with open(path) as f:
             return json.load(f)
@@ -88,7 +88,8 @@ def is_sms_sent_today(game_hour_utc: int, cache: dict, today: str) -> bool:
 
 def is_game_queried_today(game_pk: int, cache: dict, today: str) -> bool:
     """True if *game_pk* was already queried on *today*."""
-    return cache.get(str(game_pk)) == today
+    entry = cache.get(str(game_pk))
+    return isinstance(entry, dict) and entry.get("date") == today
 
 
 def log_schedule_fetch_error(exc, path=SCHEDULE_ERROR_LOG_FILE):
@@ -278,23 +279,30 @@ def process_game_lineup(
 
     Marks the game as queried only when the lineup is posted (non-empty), so
     a pre-lineup cron firing does not block a later firing from picking up the
-    posted lineup.
+    posted lineup. An already-queried game still contributes its cached
+    players to *all_players* — the cache exists to skip redundant lineup
+    fetches within the same day, not to make later same-day runs incomplete.
 
     Returns True if a lineup fetch was attempted, False if the game was skipped.
     """
     game_pk = g["gamePk"]
-    if is_game_queried_today(game_pk, queried_games_cache, today):
-        return False
-    lineup = fetch_lineup(game_pk)
-    if lineup["home"] or lineup["away"]:
-        hour = g["start_dt"].hour
+    hour = g["start_dt"].hour
+    cached_entry = queried_games_cache.get(str(game_pk))
+    if isinstance(cached_entry, dict) and cached_entry.get("date") == today:
         schedule_map[g["home_team_id"]] = hour
         schedule_map[g["away_team_id"]] = hour
-        all_players.extend(lineup["home"])
-        all_players.extend(lineup["away"])
+        all_players.extend(cached_entry.get("players", []))
+        return False
+
+    lineup = fetch_lineup(game_pk)
+    if lineup["home"] or lineup["away"]:
+        schedule_map[g["home_team_id"]] = hour
+        schedule_map[g["away_team_id"]] = hour
+        players = lineup["home"] + lineup["away"]
+        all_players.extend(players)
         # Only mark after a posted lineup so a subsequent run can still pull it
         # once it posts.
-        queried_games_cache[str(game_pk)] = today
+        queried_games_cache[str(game_pk)] = {"date": today, "players": players}
     return True
 
 
