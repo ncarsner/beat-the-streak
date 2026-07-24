@@ -16,7 +16,7 @@ MLB_API_BASE = "https://statsapi.mlb.com/api/v1"
 
 # Limit the number of players fetched per run for validation purposes.
 # Increase or set to None to process all players in the provided pool.
-MAX_PLAYERS = 10
+MAX_PLAYERS = 50
 
 # Where "no recent data" results are remembered between runs.
 NO_DATA_CACHE_FILE = Path(__file__).parent / ".cache" / "no_data_cache.json"
