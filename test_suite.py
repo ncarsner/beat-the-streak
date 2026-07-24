@@ -1131,7 +1131,7 @@ def test_dispatch_missing_credential_logs_and_skips_sms(
     summary = [_summary_entry("P1", 0.8, game_hour=19)]
     dispatch_scheduled_sms(summary, {}, "2026-07-24")
     assert send_calls == []
-    assert "skipped" in capsys.readouterr().out
+    assert "SMS send skipped" in capsys.readouterr().out
 
 
 def test_dispatch_all_credentials_set_proceeds_to_send(monkeypatch):
@@ -1190,7 +1190,7 @@ def test_run_scheduled_mode_sends_sms_for_each_grouping(monkeypatch):
     monkeypatch.setattr(
         main,
         "send_sms_notification",
-        lambda ranked, hour, *a, **kw: sms_calls.append(hour),
+        lambda ranked, hour, *a, **kw: sms_calls.append(hour) or True,
     )
     monkeypatch.setenv("TWILIO_ACCOUNT_SID", "sid")
     monkeypatch.setenv("TWILIO_AUTH_TOKEN", "tok")
