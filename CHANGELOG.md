@@ -28,6 +28,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`*/15 14-23,0-2 * * *`, covering 10am–10pm EDT), gated by `vars.SEASON_ACTIVE`, with the
   four Twilio secrets wired via `env:` and `actions/cache` persisting `.cache/` across
   same-day runs.
+- `CONSENT.md`: SMS opt-in consent statement for the single-subscriber notification feature,
+  hosted as the proof-of-consent link for Twilio Toll-Free Verification.
+
+### Fixed
+- `queried_games_cache.json` previously stored only a bare `{gamePk: date}` flag, so once a
+  game's lineup was fetched successfully, every later run that same day skipped the game
+  entirely and lost its players from the stdout table, not just the redundant lineup API
+  call. The cache now stores the fetched player list alongside the date
+  (`{gamePk: {date, players}}`), so a same-day cache hit still contributes those players to
+  the run's output while still skipping the network call.
 
 ---
 
