@@ -40,3 +40,7 @@ TEAM_CROSSWALK: dict[str, TeamInfo] = {
     "Toronto Blue Jays": {"id": 141, "abbreviation": "TOR"},
     "Washington Nationals": {"id": 120, "abbreviation": "WSH"},
 }
+
+TEAM_ID_TO_ABBR: dict[int, str] = {
+    info["id"]: info["abbreviation"] for info in TEAM_CROSSWALK.values()
+}

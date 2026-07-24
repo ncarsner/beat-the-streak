@@ -5,6 +5,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-07-20
+
+### Added
+- `fetch_lineup(game_pk)`: calls `/game/{gamePk}/boxscore` and returns the posted batting-order
+  lineup as `{home: [...], away: [...]}` lists of `{id, fullName, team_id}` dicts. Empty or
+  absent `battingOrder` and request failures both return empty lists without raising.
+- `select_games(games, now, scheduled)`: filters the day's schedule to the relevant window.
+  Manual mode (default) includes all games starting at or after `now`; scheduled/cron mode
+  (`--scheduled`) includes only games starting within the next 2 hours.
+- `--scheduled` CLI flag (store_true): selects cron/scheduled window logic. Omitting it
+  selects manual mode. Intended for recurring runs every 15–20 minutes.
+- Per-gamePk queried cache (`.cache/queried_games_cache.json`, date-scoped): records which
+  games have already had their lineup fetched and players queried. Subsequent same-day runs
+  skip any already-queried `gamePk`, preventing duplicate stat queries on repeated cron fires.
+- `TEAM_ID_TO_ABBR` reverse index in `teams.py`: numeric team ID → abbreviation, derived from
+  `TEAM_CROSSWALK`. Team resolution no longer requires a name-match step.
+
+### Changed
+- Player pool is now fully dynamic: determined at runtime from posted MLB lineups rather than
+  a static `players.py` / `selected_hitters` list.
+- `scrape_player_data` now accepts `(player_id, player_name, team_id)` directly from lineup
+  data, with no `/people/search` name-search step.
+- No-data cache (`.cache/no_data_cache.json`) rekeyed by numeric player ID instead of player
+  name.
+- `fetch_schedule` now returns a list of per-game records (gamePk, gameNumber, home/away
+  team_id, start datetime); doubleheader games appear as distinct entries.
+- `MAX_PLAYERS` is now a post-selection safety cap on the total player list, not a
+  pool-slicing mode control.
+
+### Removed
+- `--mode {subset,max,full}` CLI flag and the `resolve_run_config` branching it drove.
+- `players.py` and the static `hitters` / `selected_hitters` pool.
+- `lookup_player_info`, `_player_id_cache`, and all `/people/search` name-lookup logic.
+- `.cache/missing_team_cache.json` and its load/save functions — name-match gaps no longer
+  occur now that team resolution is ID-based.
+
+---
+
 ## 2026-07-14
 
 ### Added
