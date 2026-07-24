@@ -21,6 +21,7 @@ from main import (
     select_games,
     log_schedule_fetch_error,
     probable_hitters,
+    group_picks_by_start_time,
     build_arg_parser,
     DEFAULT_COOLDOWN_DAYS,
 )
@@ -779,3 +780,102 @@ def test_process_game_lineup_prior_day_entry_does_not_block(monkeypatch):
     assert result is True
     assert cache == {"700001": "2026-07-20"}  # overwritten with today
     assert all_players == home + away
+
+
+# ---- group_picks_by_start_time ----
+
+
+def _summary_entry(name, prob, game_hour=19, team="TST"):
+    return {
+        "Player": name,
+        "Team": team,
+        "probability": prob,
+        "At Bats": 10,
+        "Hits": 3,
+        "Walks": 1,
+        "Strikeouts": 2,
+        "GameHourUTC": game_hour,
+    }
+
+
+@pytest.mark.parametrize(
+    "hours, expected_keys",
+    [
+        ([18, 18, 21, 21], {18, 21}),  # two distinct groupings
+        ([19, 19, 19, 19, 19, 19], {19}),  # single grouping
+        ([17, 20, 23], {17, 20, 23}),  # three distinct groupings
+    ],
+    ids=["two-groupings", "single-grouping", "three-groupings"],
+)
+def test_group_picks_grouping_keys(hours, expected_keys):
+    data = [
+        _summary_entry(f"P{i}", 0.9 - i * 0.05, game_hour=h)
+        for i, h in enumerate(hours)
+    ]
+    result = group_picks_by_start_time(data)
+    assert set(result.keys()) == expected_keys
+
+
+def test_group_picks_two_groupings_ranked_independently():
+    data = [
+        _summary_entry("A", 0.7, game_hour=18),
+        _summary_entry("B", 0.6, game_hour=18),
+        _summary_entry("C", 0.9, game_hour=21),
+        _summary_entry("D", 0.5, game_hour=21),
+    ]
+    result = group_picks_by_start_time(data)
+    assert [p["Player"] for p in result[18]] == ["A", "B"]
+    assert [p["Player"] for p in result[21]] == ["C", "D"]
+
+
+@pytest.mark.parametrize(
+    "player_count, top_n, expected_count",
+    [
+        (3, 5, 3),  # fewer than top_n — return all, no padding
+        (5, 5, 5),  # exactly top_n
+        (7, 5, 5),  # more than top_n — sliced to top_n
+        (2, 5, 2),  # well below minimum — return all
+    ],
+    ids=["fewer-than-top_n", "exactly-top_n", "more-than-top_n", "two-players"],
+)
+def test_group_picks_respects_top_n_floor_and_cap(player_count, top_n, expected_count):
+    data = [
+        _summary_entry(f"P{i}", 0.9 - i * 0.05, game_hour=19)
+        for i in range(player_count)
+    ]
+    result = group_picks_by_start_time(data, top_n=top_n)
+    assert len(result[19]) == expected_count
+
+
+def test_group_picks_sorted_by_probability_descending():
+    data = [
+        _summary_entry("Low", 0.3, game_hour=20),
+        _summary_entry("High", 0.9, game_hour=20),
+        _summary_entry("Mid", 0.6, game_hour=20),
+    ]
+    result = group_picks_by_start_time(data)
+    probs = [p["probability"] for p in result[20]]
+    assert probs == sorted(probs, reverse=True)
+
+
+def test_group_picks_excludes_none_game_hour():
+    data = [
+        _summary_entry("HasHour", 0.8, game_hour=19),
+        {**_summary_entry("NoHour", 0.9), "GameHourUTC": None},
+    ]
+    result = group_picks_by_start_time(data)
+    assert set(result.keys()) == {19}
+    assert all(p["Player"] != "NoHour" for p in result[19])
+
+
+def test_group_picks_empty_input_returns_empty_dict():
+    assert group_picks_by_start_time([]) == {}
+
+
+def test_group_picks_does_not_modify_probable_hitters(capsys):
+    # probable_hitters global behavior unchanged after adding group_picks_by_start_time
+    data = [_player_entry(f"P{i}", 0.9 - i * 0.1) for i in range(8)]
+    probable_hitters(data, n=2)
+    out = capsys.readouterr().out
+    assert "P1" in out  # top slice present
+    assert "P8" not in out  # out-of-range player absent

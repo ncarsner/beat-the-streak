@@ -373,6 +373,27 @@ def probable_hitters(summary_data, n=5):
     print(table)
 
 
+def group_picks_by_start_time(
+    summary_data: list[dict], top_n: int = 5
+) -> dict[int, list[dict]]:
+    """Group summary entries by GameHourUTC and return the top *top_n* per group.
+
+    Players with GameHourUTC=None are excluded. Returns a dict keyed by
+    GameHourUTC integer, each value sorted by probability descending, capped at *top_n*.
+    No minimum floor: a group with fewer than *top_n* players returns all of them.
+    """
+    groups: dict[int, list[dict]] = {}
+    for player in summary_data:
+        hour = player.get("GameHourUTC")
+        if hour is None:
+            continue
+        groups.setdefault(hour, []).append(player)
+    return {
+        hour: sorted(players, key=lambda p: p["probability"], reverse=True)[:top_n]
+        for hour, players in groups.items()
+    }
+
+
 def build_arg_parser():
     parser = argparse.ArgumentParser(
         description="Beat the Streak — hit-probability ranking tool"
