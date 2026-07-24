@@ -14,6 +14,9 @@ from main import (
     load_queried_games_cache,
     save_queried_games_cache,
     is_game_queried_today,
+    load_sms_sent_cache,
+    save_sms_sent_cache,
+    is_sms_sent_today,
     process_game_lineup,
     is_in_cooldown,
     fetch_schedule,
@@ -993,7 +996,7 @@ def test_dispatch_scheduled_sms_calls_send_per_grouping(monkeypatch):
         _summary_entry("P1", 0.8, game_hour=18),
         _summary_entry("P2", 0.7, game_hour=19),
     ]
-    dispatch_scheduled_sms(summary)
+    dispatch_scheduled_sms(summary, {}, "2026-07-24")
     assert sorted(calls) == [18, 19]
 
 
@@ -1002,8 +1005,85 @@ def test_dispatch_scheduled_sms_empty_summary_no_send(monkeypatch):
     monkeypatch.setattr(
         main, "send_sms_notification", lambda *a, **kw: calls.append(True)
     )
-    dispatch_scheduled_sms([])
+    dispatch_scheduled_sms([], {}, "2026-07-24")
     assert calls == []
+
+
+# ---- sms_sent_cache: persistence ----
+
+
+def test_load_sms_sent_cache_missing_file_returns_empty_dict(tmp_path):
+    assert load_sms_sent_cache(tmp_path / "does_not_exist.json") == {}
+
+
+def test_load_sms_sent_cache_corrupt_file_returns_empty_dict(tmp_path):
+    bad_file = tmp_path / "corrupt.json"
+    bad_file.write_text("not valid json")
+    assert load_sms_sent_cache(bad_file) == {}
+
+
+def test_save_and_load_sms_sent_cache_roundtrip(tmp_path):
+    cache_file = tmp_path / "sms_sent_cache.json"
+    cache = {"19": "2026-07-24", "23": "2026-07-24"}
+    save_sms_sent_cache(cache, cache_file)
+    assert load_sms_sent_cache(cache_file) == cache
+
+
+# ---- is_sms_sent_today ----
+
+
+def test_is_sms_sent_today_absent_returns_false():
+    assert is_sms_sent_today(19, {}, "2026-07-24") is False
+
+
+def test_is_sms_sent_today_present_with_today_returns_true():
+    cache = {"19": "2026-07-24"}
+    assert is_sms_sent_today(19, cache, "2026-07-24") is True
+
+
+def test_is_sms_sent_today_stale_prior_day_returns_false():
+    cache = {"19": "2026-07-23"}
+    assert is_sms_sent_today(19, cache, "2026-07-24") is False
+
+
+# ---- dispatch_scheduled_sms: cache-aware behavior ----
+
+
+def test_dispatch_marks_cache_on_successful_send(monkeypatch):
+    monkeypatch.setattr(main, "send_sms_notification", lambda *a, **kw: True)
+    cache: dict = {}
+    summary = [_summary_entry("P1", 0.8, game_hour=19)]
+    dispatch_scheduled_sms(summary, cache, "2026-07-24")
+    assert cache == {"19": "2026-07-24"}
+
+
+def test_dispatch_skips_already_sent_grouping(monkeypatch):
+    send_calls = []
+    monkeypatch.setattr(
+        main,
+        "send_sms_notification",
+        lambda *a, **kw: send_calls.append(True) or True,
+    )
+    cache = {"19": "2026-07-24"}
+    summary = [_summary_entry("P1", 0.8, game_hour=19)]
+    dispatch_scheduled_sms(summary, cache, "2026-07-24")
+    assert send_calls == []
+
+
+def test_dispatch_does_not_mark_cache_on_failed_send(monkeypatch):
+    monkeypatch.setattr(main, "send_sms_notification", lambda *a, **kw: False)
+    cache: dict = {}
+    summary = [_summary_entry("P1", 0.8, game_hour=19)]
+    dispatch_scheduled_sms(summary, cache, "2026-07-24")
+    assert cache == {}
+
+
+def test_dispatch_prior_day_cache_entry_does_not_block_today(monkeypatch):
+    monkeypatch.setattr(main, "send_sms_notification", lambda *a, **kw: True)
+    cache = {"19": "2026-07-23"}  # stale — yesterday
+    summary = [_summary_entry("P1", 0.8, game_hour=19)]
+    dispatch_scheduled_sms(summary, cache, "2026-07-24")
+    assert cache == {"19": "2026-07-24"}
 
 
 # ---- run: scheduled gate ----
@@ -1020,8 +1100,10 @@ def _patch_run_io(monkeypatch, summary_data):
     monkeypatch.setattr(main, "fetch_schedule", lambda date: [])
     monkeypatch.setattr(main, "load_queried_games_cache", lambda: {})
     monkeypatch.setattr(main, "load_no_data_cache", lambda: {})
+    monkeypatch.setattr(main, "load_sms_sent_cache", lambda: {})
     monkeypatch.setattr(main, "save_no_data_cache", lambda cache: None)
     monkeypatch.setattr(main, "save_queried_games_cache", lambda cache: None)
+    monkeypatch.setattr(main, "save_sms_sent_cache", lambda cache: None)
     monkeypatch.setattr(main, "compile_player_data", lambda **kw: summary_data)
     monkeypatch.setattr(main, "probable_hitters", lambda data, n=5: None)
 

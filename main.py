@@ -24,6 +24,9 @@ NO_DATA_CACHE_FILE = Path(__file__).parent / ".cache" / "no_data_cache.json"
 # Where per-game lineup queries are recorded to avoid re-querying on the same day.
 QUERIED_GAMES_CACHE_FILE = Path(__file__).parent / ".cache" / "queried_games_cache.json"
 
+# Where successfully-sent SMS groupings are recorded to avoid re-sending on the same day.
+SMS_SENT_CACHE_FILE = Path(__file__).parent / ".cache" / "sms_sent_cache.json"
+
 # Where /schedule request failures are logged for later review.
 SCHEDULE_ERROR_LOG_FILE = Path(__file__).parent / ".cache" / "schedule_fetch_errors.log"
 
@@ -61,6 +64,26 @@ def save_queried_games_cache(cache, path=QUERIED_GAMES_CACHE_FILE):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(cache, f, indent=2, sort_keys=True)
+
+
+def load_sms_sent_cache(path=SMS_SENT_CACHE_FILE):
+    """Return the {game_hour_str: date_str} cache from a prior run, or {} if absent/corrupt."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_sms_sent_cache(cache, path=SMS_SENT_CACHE_FILE):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(cache, f, indent=2, sort_keys=True)
+
+
+def is_sms_sent_today(game_hour_utc: int, cache: dict, today: str) -> bool:
+    """True if an SMS for *game_hour_utc* was already sent on *today*."""
+    return cache.get(str(game_hour_utc)) == today
 
 
 def is_game_queried_today(game_pk: int, cache: dict, today: str) -> bool:
@@ -432,7 +455,9 @@ def send_sms_notification(
     return True
 
 
-def dispatch_scheduled_sms(summary: list[dict]) -> None:
+def dispatch_scheduled_sms(
+    summary: list[dict], sms_sent_cache: dict, today: str
+) -> None:
     """Send per-grouping SMS notifications. Only called in --scheduled mode."""
     grouped = group_picks_by_start_time(summary)
     account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
@@ -440,9 +465,13 @@ def dispatch_scheduled_sms(summary: list[dict]) -> None:
     from_number = os.environ.get("TWILIO_FROM_NUMBER", "")
     to_number = os.environ.get("SUBSCRIBER_PHONE_NUMBER", "")
     for game_hour, ranked in grouped.items():
-        send_sms_notification(
+        if is_sms_sent_today(game_hour, sms_sent_cache, today):
+            continue
+        success = send_sms_notification(
             ranked, game_hour, account_sid, auth_token, from_number, to_number
         )
+        if success:
+            sms_sent_cache[str(game_hour)] = today
 
 
 def run(args: argparse.Namespace) -> None:
@@ -472,7 +501,9 @@ def run(args: argparse.Namespace) -> None:
     probable_hitters(summary, n=5)
 
     if args.scheduled:
-        dispatch_scheduled_sms(summary)
+        sms_sent_cache = load_sms_sent_cache()
+        dispatch_scheduled_sms(summary, sms_sent_cache, today)
+        save_sms_sent_cache(sms_sent_cache)
 
 
 def build_arg_parser():
