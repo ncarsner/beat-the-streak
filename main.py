@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import requests
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,6 +23,9 @@ NO_DATA_CACHE_FILE = Path(__file__).parent / ".cache" / "no_data_cache.json"
 
 # Where per-game lineup queries are recorded to avoid re-querying on the same day.
 QUERIED_GAMES_CACHE_FILE = Path(__file__).parent / ".cache" / "queried_games_cache.json"
+
+# Where successfully-sent SMS groupings are recorded to avoid re-sending on the same day.
+SMS_SENT_CACHE_FILE = Path(__file__).parent / ".cache" / "sms_sent_cache.json"
 
 # Where /schedule request failures are logged for later review.
 SCHEDULE_ERROR_LOG_FILE = Path(__file__).parent / ".cache" / "schedule_fetch_errors.log"
@@ -60,6 +64,26 @@ def save_queried_games_cache(cache, path=QUERIED_GAMES_CACHE_FILE):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(cache, f, indent=2, sort_keys=True)
+
+
+def load_sms_sent_cache(path=SMS_SENT_CACHE_FILE):
+    """Return the {game_hour_str: date_str} cache from a prior run, or {} if absent/corrupt."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_sms_sent_cache(cache, path=SMS_SENT_CACHE_FILE):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(cache, f, indent=2, sort_keys=True)
+
+
+def is_sms_sent_today(game_hour_utc: int, cache: dict, today: str) -> bool:
+    """True if an SMS for *game_hour_utc* was already sent on *today*."""
+    return cache.get(str(game_hour_utc)) == today
 
 
 def is_game_queried_today(game_pk: int, cache: dict, today: str) -> bool:
@@ -373,6 +397,121 @@ def probable_hitters(summary_data, n=5):
     print(table)
 
 
+def group_picks_by_start_time(
+    summary_data: list[dict], top_n: int = 5
+) -> dict[int, list[dict]]:
+    """Group summary entries by GameHourUTC and return the top *top_n* per group.
+
+    Players with GameHourUTC=None are excluded. Returns a dict keyed by
+    GameHourUTC integer, each value sorted by probability descending, capped at *top_n*.
+    No minimum floor: a group with fewer than *top_n* players returns all of them.
+    """
+    groups: dict[int, list[dict]] = {}
+    for player in summary_data:
+        hour = player.get("GameHourUTC")
+        if hour is None:
+            continue
+        groups.setdefault(hour, []).append(player)
+    return {
+        hour: sorted(players, key=lambda p: p["probability"], reverse=True)[:top_n]
+        for hour, players in groups.items()
+    }
+
+
+def format_sms_body(ranked_list: list[dict], game_hour_utc: int) -> str:
+    """Return the SMS text body for one start-time grouping."""
+    lines = [f"Top picks — {game_hour_utc:02d}:00 UTC"]
+    for i, player in enumerate(ranked_list, 1):
+        lines.append(
+            f"{i}. {player['Player']} ({player['Team']}) — {player['probability']:.1%}"
+        )
+    return "\n".join(lines)
+
+
+def send_sms_notification(
+    ranked_list: list[dict],
+    game_hour_utc: int,
+    account_sid: str,
+    auth_token: str,
+    from_number: str,
+    to_number: str,
+) -> bool:
+    """POST an SMS to Twilio's Messages endpoint. Returns True on 2xx, False otherwise."""
+    body = format_sms_body(ranked_list, game_hour_utc)
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+    try:
+        resp = requests.post(
+            url,
+            auth=(account_sid, auth_token),
+            data={"From": from_number, "To": to_number, "Body": body},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        print(f"SMS send failed ({exc})")
+        return False
+    if not (200 <= resp.status_code < 300):
+        print(f"SMS send failed (HTTP {resp.status_code})")
+        return False
+    return True
+
+
+def dispatch_scheduled_sms(
+    summary: list[dict], sms_sent_cache: dict, today: str
+) -> None:
+    """Send per-grouping SMS notifications. Only called in --scheduled mode."""
+    grouped = group_picks_by_start_time(summary)
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    from_number = os.environ.get("TWILIO_FROM_NUMBER", "")
+    to_number = os.environ.get("SUBSCRIBER_PHONE_NUMBER", "")
+    if not all([account_sid, auth_token, from_number, to_number]):
+        print(
+            "SMS send skipped: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, "
+            "TWILIO_FROM_NUMBER, or SUBSCRIBER_PHONE_NUMBER not set"
+        )
+        return
+    for game_hour, ranked in grouped.items():
+        if is_sms_sent_today(game_hour, sms_sent_cache, today):
+            continue
+        success = send_sms_notification(
+            ranked, game_hour, account_sid, auth_token, from_number, to_number
+        )
+        if success:
+            sms_sent_cache[str(game_hour)] = today
+
+
+def run(args: argparse.Namespace) -> None:
+    """Execute one full run with the given parsed arguments."""
+    today = datetime.today().strftime("%Y-%m-%d")
+    now = datetime.now(timezone.utc)
+    games = fetch_schedule(today)
+    selected = select_games(games, now, scheduled=args.scheduled)
+
+    schedule_map: dict = {}
+    all_players: list[dict] = []
+    queried_games_cache = load_queried_games_cache()
+    for g in selected:
+        process_game_lineup(g, queried_games_cache, today, schedule_map, all_players)
+
+    no_data_cache = load_no_data_cache()
+    summary = compile_player_data(
+        players=all_players,
+        limit=MAX_PLAYERS,
+        cooldown_days=args.cooldown_days,
+        cache=no_data_cache,
+        schedule_map=schedule_map,
+    )
+    save_no_data_cache(no_data_cache)
+    save_queried_games_cache(queried_games_cache)
+
+    probable_hitters(summary, n=5)
+
+    if args.scheduled:
+        sms_sent_cache = load_sms_sent_cache()
+        dispatch_scheduled_sms(summary, sms_sent_cache, today)
+        save_sms_sent_cache(sms_sent_cache)
+
+
 def build_arg_parser():
     parser = argparse.ArgumentParser(
         description="Beat the Streak — hit-probability ranking tool"
@@ -395,28 +534,4 @@ def build_arg_parser():
 
 
 if __name__ == "__main__":
-    args = build_arg_parser().parse_args()
-
-    today = datetime.today().strftime("%Y-%m-%d")
-    now = datetime.now(timezone.utc)
-    games = fetch_schedule(today)
-    selected = select_games(games, now, scheduled=args.scheduled)
-
-    schedule_map = {}
-    all_players: list[dict] = []
-    queried_games_cache = load_queried_games_cache()
-    for g in selected:
-        process_game_lineup(g, queried_games_cache, today, schedule_map, all_players)
-
-    no_data_cache = load_no_data_cache()
-    summary = compile_player_data(
-        players=all_players,
-        limit=MAX_PLAYERS,
-        cooldown_days=args.cooldown_days,
-        cache=no_data_cache,
-        schedule_map=schedule_map,
-    )
-    save_no_data_cache(no_data_cache)
-    save_queried_games_cache(queried_games_cache)
-
-    probable_hitters(summary, n=5)
+    run(build_arg_parser().parse_args())

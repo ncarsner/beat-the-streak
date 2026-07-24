@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-07-24
+
+### Added
+- SMS notifications via Twilio: `--scheduled` runs now send a per-grouping text message listing
+  the top 5 players by hit probability for each `GameHourUTC` window. Manual (flag-less) mode
+  never triggers a Twilio call.
+- `group_picks_by_start_time`: groups a run's qualifying players by `GameHourUTC` and ranks the
+  top 5 (or fewer) per group by hit probability.
+- `format_sms_body` / `send_sms_notification`: format and POST a per-grouping message to
+  Twilio's Messages API using HTTP Basic Auth; a non-2xx response or `requests.RequestException`
+  is caught and does not raise out of the function.
+- `dispatch_scheduled_sms`: orchestrates grouping, per-grouping cache checks, SMS dispatch, and
+  cache writes during `--scheduled` runs.
+- Per-grouping SMS-sent cache (`.cache/sms_sent_cache.json`, date-scoped by `GameHourUTC`): a
+  grouping is marked sent only after a confirmed 2xx response; a failed send leaves it unmarked
+  so the next `--scheduled` run retries automatically.
+- Missing-credential guard in `dispatch_scheduled_sms`: if any of `TWILIO_ACCOUNT_SID`,
+  `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, or `SUBSCRIBER_PHONE_NUMBER` is unset, the SMS
+  step is logged and skipped without crashing the run or blocking table output.
+- GitHub Actions workflow (`.github/workflows/sms-notify.yml`): 15-minute cron
+  (`*/15 14-23,0-2 * * *`, covering 10am–10pm EDT), gated by `vars.SEASON_ACTIVE`, with the
+  four Twilio secrets wired via `env:` and `actions/cache` persisting `.cache/` across
+  same-day runs.
+
+---
+
 ## 2026-07-20
 
 ### Added

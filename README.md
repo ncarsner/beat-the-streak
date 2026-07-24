@@ -79,6 +79,41 @@ useful for ad-hoc runs where you want to see all games still to be played today.
 `MAX_PLAYERS` (default `10`) in `main.py` caps the total number of players processed per run
 after window and lineup selection.
 
+### SMS notifications
+
+When running in `--scheduled` mode, the tool sends an SMS via Twilio for each game-start-time
+grouping (keyed by `GameHourUTC`) that has qualifying players. Each message lists up to the top
+5 players for that window, ranked by hit probability.
+
+**Behavior:**
+- SMS sending only occurs in `--scheduled` mode; the default manual mode never sends a text.
+- Each grouping is texted at most once per calendar day. A confirmed 2xx response marks the
+  grouping as sent; a failed or non-2xx response leaves it unmarked so the next `--scheduled`
+  run within the same window retries automatically.
+- If any of the four required environment variables is unset, the SMS step is logged and skipped
+  without crashing the run or blocking table output.
+
+**Required environment variables:**
+
+| Variable | Description |
+|---|---|
+| `TWILIO_ACCOUNT_SID` | Twilio account SID |
+| `TWILIO_AUTH_TOKEN` | Twilio auth token |
+| `TWILIO_FROM_NUMBER` | Sending phone number in E.164 format (e.g. `+15551234567`) |
+| `SUBSCRIBER_PHONE_NUMBER` | Recipient phone number in E.164 format |
+
+**GitHub Actions workflow** (`.github/workflows/sms-notify.yml`):
+
+The workflow runs `python3 main.py --scheduled` on a 15-minute cron (`*/15 14-23,0-2 * * *`),
+covering 10am–10pm EDT. The job is gated by the `SEASON_ACTIVE` repository variable — set it to
+any non-empty value in **Settings > Variables** to enable live runs; clear it during the
+off-season.
+
+The four Twilio credentials must be added as repository secrets in
+**Settings > Secrets and variables > Actions**. The `.cache/` directory is persisted across
+same-day runs via `actions/cache` (keyed by date), so the SMS-sent cache survives between the
+15-minute firings.
+
 ### No-data cache and cooldown
 
 A player who polls with no recent data is remembered in `.cache/no_data_cache.json` and
