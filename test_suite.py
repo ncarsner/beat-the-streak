@@ -22,6 +22,8 @@ from main import (
     log_schedule_fetch_error,
     probable_hitters,
     group_picks_by_start_time,
+    format_sms_body,
+    send_sms_notification,
     build_arg_parser,
     DEFAULT_COOLDOWN_DAYS,
 )
@@ -879,3 +881,97 @@ def test_group_picks_does_not_modify_probable_hitters(capsys):
     out = capsys.readouterr().out
     assert "P1" in out  # top slice present
     assert "P8" not in out  # out-of-range player absent
+
+
+# ---- format_sms_body ----
+
+
+def _ranked_entry(name, prob, team="TST"):
+    return {"Player": name, "Team": team, "probability": prob}
+
+
+def test_format_sms_body_header_contains_game_hour():
+    body = format_sms_body([_ranked_entry("P1", 0.683)], game_hour_utc=19)
+    assert "19:00 UTC" in body
+
+
+def test_format_sms_body_numbered_lines():
+    ranked = [
+        _ranked_entry("Freddie Freeman", 0.683, "LAD"),
+        _ranked_entry("Max Muncy", 0.551, "LAD"),
+    ]
+    body = format_sms_body(ranked, game_hour_utc=19)
+    lines = body.splitlines()
+    assert lines[1].startswith("1.")
+    assert "Freddie Freeman" in lines[1]
+    assert "LAD" in lines[1]
+    assert "68.3%" in lines[1]
+    assert lines[2].startswith("2.")
+    assert "Max Muncy" in lines[2]
+    assert "55.1%" in lines[2]
+
+
+def test_format_sms_body_zero_pads_hour():
+    body = format_sms_body([_ranked_entry("P1", 0.5)], game_hour_utc=9)
+    assert "09:00 UTC" in body
+
+
+# ---- send_sms_notification ----
+
+_CREDS = {
+    "account_sid": "ACtest123",
+    "auth_token": "tokenabc",
+    "from_number": "+15550001111",
+    "to_number": "+15559998888",
+}
+
+
+def test_send_sms_notification_success(monkeypatch):
+    calls = []
+
+    def fake_post(url, auth=None, data=None, timeout=None):
+        calls.append({"url": url, "auth": auth, "data": data})
+        return FakeResponse({"sid": "SM123"}, status_code=201)
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    ranked = [_ranked_entry("P1", 0.7, "NYY")]
+    result = send_sms_notification(ranked, 19, **_CREDS)
+
+    assert result is True
+    assert len(calls) == 1
+    assert "ACtest123" in calls[0]["url"]
+    assert calls[0]["auth"] == ("ACtest123", "tokenabc")
+    assert calls[0]["data"]["From"] == "+15550001111"
+    assert calls[0]["data"]["To"] == "+15559998888"
+    assert "19:00 UTC" in calls[0]["data"]["Body"]
+
+
+def test_send_sms_notification_non_2xx_returns_false(monkeypatch):
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda *a, **kw: FakeResponse({"message": "bad request"}, status_code=400),
+    )
+    result = send_sms_notification([_ranked_entry("P1", 0.7)], 19, **_CREDS)
+    assert result is False
+
+
+def test_send_sms_notification_request_exception_returns_false(monkeypatch):
+    def fake_post(*a, **kw):
+        raise requests.RequestException("connection refused")
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    result = send_sms_notification([_ranked_entry("P1", 0.7)], 19, **_CREDS)
+    assert result is False
+
+
+def test_send_sms_notification_does_not_raise_on_failure(monkeypatch):
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda *a, **kw: FakeResponse({}, status_code=500),
+    )
+    try:
+        send_sms_notification([_ranked_entry("P1", 0.7)], 19, **_CREDS)
+    except Exception as exc:
+        pytest.fail(f"send_sms_notification raised unexpectedly: {exc}")

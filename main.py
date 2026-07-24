@@ -394,6 +394,43 @@ def group_picks_by_start_time(
     }
 
 
+def format_sms_body(ranked_list: list[dict], game_hour_utc: int) -> str:
+    """Return the SMS text body for one start-time grouping."""
+    lines = [f"Top picks — {game_hour_utc:02d}:00 UTC"]
+    for i, player in enumerate(ranked_list, 1):
+        lines.append(
+            f"{i}. {player['Player']} ({player['Team']}) — {player['probability']:.1%}"
+        )
+    return "\n".join(lines)
+
+
+def send_sms_notification(
+    ranked_list: list[dict],
+    game_hour_utc: int,
+    account_sid: str,
+    auth_token: str,
+    from_number: str,
+    to_number: str,
+) -> bool:
+    """POST an SMS to Twilio's Messages endpoint. Returns True on 2xx, False otherwise."""
+    body = format_sms_body(ranked_list, game_hour_utc)
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+    try:
+        resp = requests.post(
+            url,
+            auth=(account_sid, auth_token),
+            data={"From": from_number, "To": to_number, "Body": body},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        print(f"SMS send failed ({exc})")
+        return False
+    if not (200 <= resp.status_code < 300):
+        print(f"SMS send failed (HTTP {resp.status_code})")
+        return False
+    return True
+
+
 def build_arg_parser():
     parser = argparse.ArgumentParser(
         description="Beat the Streak — hit-probability ranking tool"
