@@ -464,6 +464,12 @@ def dispatch_scheduled_sms(
     auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
     from_number = os.environ.get("TWILIO_FROM_NUMBER", "")
     to_number = os.environ.get("SUBSCRIBER_PHONE_NUMBER", "")
+    if not all([account_sid, auth_token, from_number, to_number]):
+        print(
+            "SMS send skipped: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, "
+            "TWILIO_FROM_NUMBER, or SUBSCRIBER_PHONE_NUMBER not set"
+        )
+        return
     for game_hour, ranked in grouped.items():
         if is_sms_sent_today(game_hour, sms_sent_cache, today):
             continue

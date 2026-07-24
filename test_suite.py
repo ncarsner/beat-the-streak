@@ -984,6 +984,13 @@ def test_send_sms_notification_does_not_raise_on_failure(monkeypatch):
 # ---- dispatch_scheduled_sms ----
 
 
+def _set_twilio_env(monkeypatch):
+    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "ACtest")
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "tok")
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+15550001111")
+    monkeypatch.setenv("SUBSCRIBER_PHONE_NUMBER", "+15559998888")
+
+
 def test_dispatch_scheduled_sms_calls_send_per_grouping(monkeypatch):
     calls = []
 
@@ -991,6 +998,7 @@ def test_dispatch_scheduled_sms_calls_send_per_grouping(monkeypatch):
         calls.append(game_hour)
         return True
 
+    _set_twilio_env(monkeypatch)
     monkeypatch.setattr(main, "send_sms_notification", fake_send)
     summary = [
         _summary_entry("P1", 0.8, game_hour=18),
@@ -1002,6 +1010,7 @@ def test_dispatch_scheduled_sms_calls_send_per_grouping(monkeypatch):
 
 def test_dispatch_scheduled_sms_empty_summary_no_send(monkeypatch):
     calls = []
+    _set_twilio_env(monkeypatch)
     monkeypatch.setattr(
         main, "send_sms_notification", lambda *a, **kw: calls.append(True)
     )
@@ -1050,6 +1059,7 @@ def test_is_sms_sent_today_stale_prior_day_returns_false():
 
 
 def test_dispatch_marks_cache_on_successful_send(monkeypatch):
+    _set_twilio_env(monkeypatch)
     monkeypatch.setattr(main, "send_sms_notification", lambda *a, **kw: True)
     cache: dict = {}
     summary = [_summary_entry("P1", 0.8, game_hour=19)]
@@ -1059,6 +1069,7 @@ def test_dispatch_marks_cache_on_successful_send(monkeypatch):
 
 def test_dispatch_skips_already_sent_grouping(monkeypatch):
     send_calls = []
+    _set_twilio_env(monkeypatch)
     monkeypatch.setattr(
         main,
         "send_sms_notification",
@@ -1071,6 +1082,7 @@ def test_dispatch_skips_already_sent_grouping(monkeypatch):
 
 
 def test_dispatch_does_not_mark_cache_on_failed_send(monkeypatch):
+    _set_twilio_env(monkeypatch)
     monkeypatch.setattr(main, "send_sms_notification", lambda *a, **kw: False)
     cache: dict = {}
     summary = [_summary_entry("P1", 0.8, game_hour=19)]
@@ -1079,11 +1091,60 @@ def test_dispatch_does_not_mark_cache_on_failed_send(monkeypatch):
 
 
 def test_dispatch_prior_day_cache_entry_does_not_block_today(monkeypatch):
+    _set_twilio_env(monkeypatch)
     monkeypatch.setattr(main, "send_sms_notification", lambda *a, **kw: True)
     cache = {"19": "2026-07-23"}  # stale — yesterday
     summary = [_summary_entry("P1", 0.8, game_hour=19)]
     dispatch_scheduled_sms(summary, cache, "2026-07-24")
     assert cache == {"19": "2026-07-24"}
+
+
+@pytest.mark.parametrize(
+    "missing_var",
+    [
+        "TWILIO_ACCOUNT_SID",
+        "TWILIO_AUTH_TOKEN",
+        "TWILIO_FROM_NUMBER",
+        "SUBSCRIBER_PHONE_NUMBER",
+    ],
+)
+def test_dispatch_missing_credential_logs_and_skips_sms(
+    monkeypatch, missing_var, capsys
+):
+    all_vars = {
+        "TWILIO_ACCOUNT_SID": "ACtest",
+        "TWILIO_AUTH_TOKEN": "tok",
+        "TWILIO_FROM_NUMBER": "+15550001111",
+        "SUBSCRIBER_PHONE_NUMBER": "+15559998888",
+    }
+    send_calls = []
+    monkeypatch.setattr(
+        main,
+        "send_sms_notification",
+        lambda *a, **kw: send_calls.append(True) or True,
+    )
+    for var, val in all_vars.items():
+        if var == missing_var:
+            monkeypatch.delenv(var, raising=False)
+        else:
+            monkeypatch.setenv(var, val)
+    summary = [_summary_entry("P1", 0.8, game_hour=19)]
+    dispatch_scheduled_sms(summary, {}, "2026-07-24")
+    assert send_calls == []
+    assert "skipped" in capsys.readouterr().out
+
+
+def test_dispatch_all_credentials_set_proceeds_to_send(monkeypatch):
+    send_calls = []
+    _set_twilio_env(monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "send_sms_notification",
+        lambda *a, **kw: send_calls.append(True) or True,
+    )
+    summary = [_summary_entry("P1", 0.8, game_hour=19)]
+    dispatch_scheduled_sms(summary, {}, "2026-07-24")
+    assert len(send_calls) == 1
 
 
 # ---- run: scheduled gate ----
