@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-07-26
+
+### Changed
+- `.github/workflows/sms-notify.yml`: disabled the 15-minute `schedule:` cron trigger
+  (commented out, not removed) and replaced it with `workflow_dispatch:` for manual-only
+  runs, since every scheduled tick was failing while Twilio Toll-Free Verification for
+  `TWILIO_FROM_NUMBER` remains pending. Re-enable the cron once the number is approved.
+
+---
+
 ## 2026-07-24
 
 ### Added
