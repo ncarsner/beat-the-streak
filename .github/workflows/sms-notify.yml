@@ -1,5 +1,9 @@
 name: SMS Notify
 
+# Cron trigger disabled 2026-07-26: Twilio Toll-Free Verification for
+# TWILIO_FROM_NUMBER is still pending, so every scheduled tick was failing.
+# Re-enable the `schedule:` block below once Twilio approves the number.
+#
 # Runs every 15 minutes during 10am-10pm EDT (14:00-02:00 UTC, crossing midnight).
 # Gated by the SEASON_ACTIVE repository variable — set it to any non-empty value in
 # repo Settings > Variables to enable live runs. Clear it during the off-season.
@@ -10,8 +14,9 @@ name: SMS Notify
 #   TWILIO_FROM_NUMBER
 #   SUBSCRIBER_PHONE_NUMBER
 on:
-  schedule:
-    - cron: "*/15 14-23,0-2 * * *"
+  workflow_dispatch: {}
+  # schedule:
+  #   - cron: "*/15 14-23,0-2 * * *"
 
 jobs:
   notify:
