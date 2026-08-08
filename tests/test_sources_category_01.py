@@ -73,6 +73,10 @@ def test_attach_category_01_adds_all_four_keys(monkeypatch):
             _vsplayer_payload([_split(season=2026, pa=6, ab=6, h=2, so=1, bb=0)])
         ),
     )
+    # attach_category_01 fetches from two sources; patching only the Stats API
+    # half leaves the Statcast pull live, which is how this test spent its first
+    # life quietly scraping Savant on every run.
+    monkeypatch.setattr(sources, "fetch_bvp_statcast", lambda b, p, s: [])
     data = {"Player": "Someone"}
     attach_category_01(data, 592450, 543037, season=2026)
     assert data["CALC_01"] == pytest.approx((2 / 6, 6))
