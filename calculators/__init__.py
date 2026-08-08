@@ -11,7 +11,8 @@ Layout and naming, applied to every category as it lands:
   named for the ``CALC_NN`` it implements. Returns a `Rate` or ``None``.
 - ``compute_category_NN(...)`` — runs every implemented calculator in that
   module and returns ``{"CALC_NN": Rate | None, ...}``.
-- ``common.py`` — the types and counting-stat helpers shared across categories.
+- ``common.py`` — the types and counting-stat helpers shared across categories,
+  including the ``Window`` type and ``apply_window`` helper.
 - ``sources.py`` — the only module here that touches the network. Pure
   calculator modules never import it, so the arithmetic stays testable without
   mocking.
@@ -29,17 +30,33 @@ category-specific constant stays where it belongs.
 """
 
 from calculators.common import (
+    CAREER,
     COUNTING_STATS,
+    DAYS,
+    GAMES,
+    PLATE_APPEARANCES,
     Rate,
+    SEASON,
+    SEASONS,
+    Window,
     aggregate_lines,
+    apply_window,
     empty_line,
     rate_or_none,
 )
 
 __all__ = [
+    "CAREER",
     "COUNTING_STATS",
+    "DAYS",
+    "GAMES",
+    "PLATE_APPEARANCES",
     "Rate",
+    "SEASON",
+    "SEASONS",
+    "Window",
     "aggregate_lines",
+    "apply_window",
     "empty_line",
     "rate_or_none",
 ]
