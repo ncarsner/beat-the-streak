@@ -44,14 +44,24 @@ STATCAST_FIELDS = (
 STATCAST_FIRST_SEASON = 2015
 
 
-def _clean(value):
-    """Convert a pandas missing value to None, leaving everything else alone."""
+def _clean(value, isna):
+    """Convert any pandas missing-value sentinel to None, leaving the rest alone.
+
+    Takes pandas' own `isna` rather than testing for NaN by hand: pandas has
+    more than one missing sentinel, and they are not interchangeable. `np.nan`
+    is a float that fails an equality check against itself, but `pd.NA` — what a
+    nullable string column yields, and `events` is unset on every pitch that
+    does not end a plate appearance — is neither a float nor comparable, so a
+    hand-rolled NaN check passes it straight through to calculators promised
+    they would only ever see None.
+    """
     if value is None:
         return None
-    # NaN is the only value not equal to itself; this avoids importing pandas.
-    if isinstance(value, float) and value != value:
-        return None
-    return value
+    try:
+        missing = bool(isna(value))
+    except (TypeError, ValueError):
+        return value
+    return None if missing else value
 
 
 def fetch_bvp_statcast(
@@ -76,6 +86,7 @@ def fetch_bvp_statcast(
     end = min(date.today(), date(season, 12, 31)).isoformat()
 
     try:
+        import pandas as pd
         from pybaseball import statcast_batter
 
         frame = statcast_batter(start, end, batter_id)
@@ -89,7 +100,7 @@ def fetch_bvp_statcast(
     matchup = frame[frame["pitcher"] == pitcher_id]
     present = [f for f in STATCAST_FIELDS if f in matchup.columns]
     return [
-        {field: _clean(row[field]) for field in present}
+        {field: _clean(row[field], pd.isna) for field in present}
         for _, row in matchup[present].iterrows()
     ]
 

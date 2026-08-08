@@ -39,6 +39,11 @@ The metric is intentionally lightweight and designed to complement, not replace,
    pip install -r requirements.txt
    ```
 
+   This includes **pybaseball**, which the Category 1 Statcast calculators need and which
+   pulls a large transitive tree (pandas, numpy, altair, cryptography). Nothing in the daily
+   run imports it — if you only want to run the ranking tool, `pip install requests
+   prettytable` is enough. The scheduled GitHub Actions workflow installs `requests` only.
+
 No API key or config file is required: the MLB Stats API is public and free to use.
 
 ---

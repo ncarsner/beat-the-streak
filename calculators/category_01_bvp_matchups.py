@@ -203,7 +203,11 @@ def calc_06_bvp_xba(pitches: Sequence[dict[str, Any]]) -> Rate | None:
 
 
 def calc_06_bvp_xwoba(pitches: Sequence[dict[str, Any]]) -> Rate | None:
-    """CALC_06 (xwOBA) — mean expected weighted on-base average on contact."""
+    """CALC_06 (xwOBA) — mean expected weighted on-base average on contact.
+
+    The only Category 1 output that is not bounded by 1.0: wOBA weights extra-base
+    hits above singles, so this runs roughly 0-2. Do not read it as a probability.
+    """
     values = _batted_balls(pitches, "estimated_woba_using_speedangle")
     return rate_or_none(sum(values), len(values))
 

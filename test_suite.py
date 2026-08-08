@@ -2040,3 +2040,40 @@ def test_attach_category_01_skips_statcast_without_a_starter(monkeypatch):
     attach_category_01(data, 518692, None, season=2026)
     assert calls == []
     assert data["CALC_05"] is None
+
+
+def test_fetch_bvp_statcast_converts_pandas_na_to_none(monkeypatch):
+    """`events` is unset on most pitches and arrives as pd.NA, not NaN."""
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "pitcher": [554430],
+            "description": pd.array(["foul"], dtype="string"),
+            "events": pd.array([None], dtype="string"),
+            "strikes": [1],
+        }
+    )
+    _install_fake_pybaseball(monkeypatch, frame=frame)
+    record = fetch_bvp_statcast(518692, 554430, season=2026)[0]
+    assert record["events"] is None
+    assert record["description"] == "foul"
+
+
+def test_fetch_bvp_statcast_record_carries_no_pandas_sentinels(monkeypatch):
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "pitcher": [554430],
+            "description": pd.array(["hit_into_play"], dtype="string"),
+            "events": pd.array([None], dtype="string"),
+            "strikes": [2],
+            "launch_speed": [float("nan")],
+            "estimated_ba_using_speedangle": [pd.NA],
+        }
+    )
+    _install_fake_pybaseball(monkeypatch, frame=frame)
+    record = fetch_bvp_statcast(518692, 554430, season=2026)[0]
+    for key, value in record.items():
+        assert value is None or not pd.isna(value), f"{key} leaked {value!r}"

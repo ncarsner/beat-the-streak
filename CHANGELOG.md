@@ -45,8 +45,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Statcast starts in 2015 and a call pulls one season — a different span than `CALC_01`'s
   career window. Returns `[]` on failure rather than raising.
 - **pybaseball 2.0.0** added to `requirements.txt`, authorized by the repo owner on 2026-08-07
-  and recorded in `AGENTS/authorized_libraries.md` (created in the same change; RULES §5 had
-  been pointing at a list this project never created). Imported lazily inside the fetch
+  and recorded in `AGENTS/authorized_libraries.md` — created in the same change, but note
+  `AGENTS/` is gitignored, so that record is local-only and this entry is the tracked one.
+  RULES §5 had been pointing at a list this project never actually created. Imported lazily inside the fetch
   function, never at module scope, so neither the daily run nor most of the test suite pays for
   pandas. `.github/workflows/sms-notify.yml` installs `requests` only and does not read
   `requirements.txt`, so the cron is unaffected.
