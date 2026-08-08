@@ -263,7 +263,7 @@ P   = 1 − (1 − avg)^exp
 ## Running tests
 
 ```bash
-pytest test_suite.py -v
+pytest tests/ -v
 ```
 
 ---
@@ -276,7 +276,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Contributing
 
-Contributions are welcome. Please update `test_suite.py` as appropriate when adding features.
+Contributions are welcome. Please update the appropriate module under `tests/` when adding features.
 
 ## License
 
