@@ -25,14 +25,13 @@ from typing import Any, Sequence
 
 from calculators.common import (
     COUNTING_STATS,
-    Rate,
+    PROBABILITY,
+    SEASONS,
     aggregate_lines,
+    apply_window,
+    empty_line,
     rate_or_none,
 )
-
-
-# CALC_03's window: the current season plus the two prior calendar years.
-RECENT_WINDOW_YEARS = 3
 
 # Statcast `description` value for a pitch the batter put into play.
 IN_PLAY = "hit_into_play"
@@ -112,47 +111,54 @@ def parse_bvp_stats(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _season_window(bvp: dict[str, Any], season: int, years: int) -> dict[str, int]:
-    """Aggregate the seasons in the inclusive window ending at *season*."""
-    earliest = season - years + 1
-    return aggregate_lines(
-        line
-        for year, line in bvp.get("by_season", {}).items()
-        if earliest <= year <= season
+    """Aggregate the seasons in the inclusive window ending at *season*.
+
+    Routes through ``apply_window`` with ``SEASONS(years)`` so the slicing
+    logic lives in one place (``calculators.common``).
+    """
+    records = [{"season": yr, **line} for yr, line in bvp.get("by_season", {}).items()]
+    sliced = apply_window(
+        records, SEASONS(years), anchor_year=season, season_field="season"
     )
+    return aggregate_lines(sliced) if sliced is not None else empty_line()
 
 
-def calc_01_bvp_career_hit_rate(bvp: dict[str, Any]) -> Rate | None:
+def calc_01_bvp_career_hit_rate(bvp: dict[str, Any]) -> PROBABILITY | None:
     """CALC_01 — H / PA across every career head-to-head plate appearance."""
     career = bvp.get("career")
     if career is None:
         return None
-    return rate_or_none(career["hits"], career["plateAppearances"])
+    val = rate_or_none(career["hits"], career["plateAppearances"])
+    return PROBABILITY(val) if val is not None else None
 
 
-def calc_02_bvp_season_hit_rate(bvp: dict[str, Any], season: int) -> Rate | None:
+def calc_02_bvp_season_hit_rate(bvp: dict[str, Any], season: int) -> PROBABILITY | None:
     """CALC_02 — H / PA head-to-head within *season* only."""
     line = bvp.get("by_season", {}).get(season)
     if line is None:
         return None
-    return rate_or_none(line["hits"], line["plateAppearances"])
+    val = rate_or_none(line["hits"], line["plateAppearances"])
+    return PROBABILITY(val) if val is not None else None
 
 
 def calc_03_bvp_recent_window_hit_rate(
-    bvp: dict[str, Any], season: int, years: int = RECENT_WINDOW_YEARS
-) -> Rate | None:
+    bvp: dict[str, Any], season: int, years: int = 3
+) -> PROBABILITY | None:
     """CALC_03 — H / PA head-to-head over the last *years* calendar years.
 
-    The window is inclusive of *season*, so the default covers `season - 2`
-    through `season`. Summed from per-season splits rather than the API's
-    `vsPlayer5Y` stat type, which is fixed at five years.
+    The window is expressed as ``SEASONS(years)`` anchored at *season*, so the
+    default covers ``season - 2`` through ``season``. Summed from per-season
+    splits rather than the API's ``vsPlayer5Y`` stat type, which is fixed at
+    five years.
     """
     line = _season_window(bvp, season, years)
-    return rate_or_none(line["hits"], line["plateAppearances"])
+    val = rate_or_none(line["hits"], line["plateAppearances"])
+    return PROBABILITY(val) if val is not None else None
 
 
 def calc_04_bvp_contact_rate(
     bvp: dict[str, Any], season: int | None = None
-) -> Rate | None:
+) -> PROBABILITY | None:
     """CALC_04 — (PA - SO - BB) / PA head-to-head: how often the matchup ends in contact.
 
     Career scope by default; pass *season* to restrict to a single season.
@@ -164,7 +170,8 @@ def calc_04_bvp_contact_rate(
     if line is None:
         return None
     pa = line["plateAppearances"]
-    return rate_or_none(pa - line["strikeOuts"] - line["baseOnBalls"], pa)
+    val = rate_or_none(pa - line["strikeOuts"] - line["baseOnBalls"], pa)
+    return PROBABILITY(val) if val is not None else None
 
 
 def _batted_balls(pitches: Sequence[dict[str, Any]], field: str) -> list[float]:
@@ -184,46 +191,51 @@ def _batted_balls(pitches: Sequence[dict[str, Any]], field: str) -> list[float]:
     return values
 
 
-def calc_05_bvp_hard_hit_rate(pitches: Sequence[dict[str, Any]]) -> Rate | None:
+def calc_05_bvp_hard_hit_rate(pitches: Sequence[dict[str, Any]]) -> PROBABILITY | None:
     """CALC_05 — share of batted balls hit at or above 95 mph exit velocity."""
     speeds = _batted_balls(pitches, "launch_speed")
     hard = sum(1 for speed in speeds if speed >= HARD_HIT_MPH)
-    return rate_or_none(hard, len(speeds))
+    val = rate_or_none(hard, len(speeds))
+    return PROBABILITY(val) if val is not None else None
 
 
-def calc_06_bvp_xba(pitches: Sequence[dict[str, Any]]) -> Rate | None:
+def calc_06_bvp_xba(pitches: Sequence[dict[str, Any]]) -> PROBABILITY | None:
     """CALC_06 (xBA) — mean expected batting average on contact.
 
-    The `rate` is an average of per-batted-ball estimates rather than a ratio of
-    counts, but it is still a value over a sample size, so it carries the same
-    `Rate` shape as everything else.
+    The ``value.rate`` is an average of per-batted-ball estimates rather than a
+    ratio of counts, but it is still a value over a sample size, so it carries
+    the same ``Rate`` shape as everything else.
     """
     values = _batted_balls(pitches, "estimated_ba_using_speedangle")
-    return rate_or_none(sum(values), len(values))
+    val = rate_or_none(sum(values), len(values))
+    return PROBABILITY(val) if val is not None else None
 
 
-def calc_06_bvp_xwoba(pitches: Sequence[dict[str, Any]]) -> Rate | None:
+def calc_06_bvp_xwoba(pitches: Sequence[dict[str, Any]]) -> PROBABILITY | None:
     """CALC_06 (xwOBA) — mean expected weighted on-base average on contact.
 
-    The only Category 1 output that is not bounded by 1.0: wOBA weights extra-base
-    hits above singles, so this runs roughly 0-2. Do not read it as a probability.
+    The only Category 1 output whose ``value.rate`` is not bounded by 1.0: wOBA
+    weights extra-base hits above singles, so this runs roughly 0–2. Typed
+    PROBABILITY for uniformity, but do not read the raw rate as a batting average.
     """
     values = _batted_balls(pitches, "estimated_woba_using_speedangle")
-    return rate_or_none(sum(values), len(values))
+    val = rate_or_none(sum(values), len(values))
+    return PROBABILITY(val) if val is not None else None
 
 
-def calc_07_bvp_whiff_rate(pitches: Sequence[dict[str, Any]]) -> Rate | None:
+def calc_07_bvp_whiff_rate(pitches: Sequence[dict[str, Any]]) -> PROBABILITY | None:
     """CALC_07 — swings and misses / total swings.
 
-    Swing and whiff classification is by Statcast `description`; see
-    `SWING_DESCRIPTIONS` and `WHIFF_DESCRIPTIONS` for the exact membership.
+    Swing and whiff classification is by Statcast ``description``; see
+    ``SWING_DESCRIPTIONS`` and ``WHIFF_DESCRIPTIONS`` for the exact membership.
     """
     swings = [p for p in pitches if p.get("description") in SWING_DESCRIPTIONS]
     whiffs = sum(1 for p in swings if p["description"] in WHIFF_DESCRIPTIONS)
-    return rate_or_none(whiffs, len(swings))
+    val = rate_or_none(whiffs, len(swings))
+    return PROBABILITY(val) if val is not None else None
 
 
-def calc_08_bvp_putaway_rate(pitches: Sequence[dict[str, Any]]) -> Rate | None:
+def calc_08_bvp_putaway_rate(pitches: Sequence[dict[str, Any]]) -> PROBABILITY | None:
     """CALC_08 — strikeouts / pitches thrown in two-strike counts.
 
     The denominator is two-strike *pitches*, not two-strike plate appearances:
@@ -232,14 +244,15 @@ def calc_08_bvp_putaway_rate(pitches: Sequence[dict[str, Any]]) -> Rate | None:
     """
     two_strike = [p for p in pitches if p.get("strikes") == 2]
     putaways = sum(1 for p in two_strike if p.get("events") in STRIKEOUT_EVENTS)
-    return rate_or_none(putaways, len(two_strike))
+    val = rate_or_none(putaways, len(two_strike))
+    return PROBABILITY(val) if val is not None else None
 
 
 def compute_category_01(
     bvp: dict[str, Any],
     season: int,
     pitches: Sequence[dict[str, Any]] | None = None,
-) -> dict[str, Rate | None]:
+) -> dict[str, PROBABILITY | None]:
     """Run every implemented Category 1 calculator.
 
     *bvp* feeds CALC_01-04. *pitches* feeds the Statcast-derived CALC_05-08; pass

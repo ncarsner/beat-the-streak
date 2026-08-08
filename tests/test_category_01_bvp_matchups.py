@@ -123,8 +123,8 @@ def test_calc_01_career_hit_rate():
         )
     )
     result = calc_01_bvp_career_hit_rate(bvp)
-    assert result == pytest.approx((23 / 76, 76))
-    assert result.denominator == 76
+    assert result.value == pytest.approx((23 / 76, 76))
+    assert result.value.denominator == 76
 
 
 def test_calc_01_returns_none_without_career_history():
@@ -148,8 +148,8 @@ def test_calc_02_season_hit_rate_isolates_the_requested_season():
             ]
         )
     )
-    assert calc_02_bvp_season_hit_rate(bvp, 2026) == pytest.approx((2 / 6, 6))
-    assert calc_02_bvp_season_hit_rate(bvp, 2025) == pytest.approx((5 / 10, 10))
+    assert calc_02_bvp_season_hit_rate(bvp, 2026).value == pytest.approx((2 / 6, 6))
+    assert calc_02_bvp_season_hit_rate(bvp, 2025).value == pytest.approx((5 / 10, 10))
 
 
 def test_calc_02_returns_none_for_unfaced_season():
@@ -178,7 +178,7 @@ def test_calc_03_recent_window_sums_only_seasons_inside_window(
         )
     )
     result = calc_03_bvp_recent_window_hit_rate(bvp, 2026, years=years)
-    assert result == pytest.approx((expected_hits / expected_pa, expected_pa))
+    assert result.value == pytest.approx((expected_hits / expected_pa, expected_pa))
 
 
 def test_calc_03_defaults_to_three_year_window():
@@ -190,7 +190,9 @@ def test_calc_03_defaults_to_three_year_window():
             ]
         )
     )
-    assert calc_03_bvp_recent_window_hit_rate(bvp, 2026) == pytest.approx((1 / 4, 4))
+    assert calc_03_bvp_recent_window_hit_rate(bvp, 2026).value == pytest.approx(
+        (1 / 4, 4)
+    )
 
 
 def test_calc_03_ignores_seasons_after_the_reference_season():
@@ -215,14 +217,18 @@ def test_calc_04_contact_rate_excludes_strikeouts_and_walks():
             ]
         )
     )
-    assert calc_04_bvp_contact_rate(bvp) == pytest.approx(((76 - 12 - 15) / 76, 76))
+    assert calc_04_bvp_contact_rate(bvp).value == pytest.approx(
+        ((76 - 12 - 15) / 76, 76)
+    )
 
 
 def test_calc_04_scoped_to_a_single_season():
     bvp = parse_bvp_stats(
         _vsplayer_payload([_split(season=2026, pa=10, ab=8, h=3, so=1, bb=2)])
     )
-    assert calc_04_bvp_contact_rate(bvp, season=2026) == pytest.approx((7 / 10, 10))
+    assert calc_04_bvp_contact_rate(bvp, season=2026).value == pytest.approx(
+        (7 / 10, 10)
+    )
     assert calc_04_bvp_contact_rate(bvp, season=2025) is None
 
 
@@ -230,7 +236,7 @@ def test_calc_04_all_outcomes_are_strikeouts_or_walks():
     bvp = parse_bvp_stats(
         _vsplayer_payload([_split(season=2026, pa=4, ab=2, h=0, so=2, bb=2)])
     )
-    assert calc_04_bvp_contact_rate(bvp) == pytest.approx((0.0, 4))
+    assert calc_04_bvp_contact_rate(bvp).value == pytest.approx((0.0, 4))
 
 
 def test_calc_04_returns_none_without_history():
@@ -250,8 +256,8 @@ def test_compute_category_01_returns_all_implemented_keys():
         )
     )
     results = compute_category_01(bvp, 2026)
-    assert results["CALC_02"] == pytest.approx((2 / 6, 6))
-    assert results["CALC_03"] == pytest.approx((6 / 16, 16))
+    assert results["CALC_02"].value == pytest.approx((2 / 6, 6))
+    assert results["CALC_03"].value == pytest.approx((6 / 16, 16))
 
 
 def test_compute_category_01_all_none_for_first_time_matchup():
@@ -273,7 +279,9 @@ def test_compute_category_01_all_none_for_first_time_matchup():
 def test_calc_05_hard_hit_rate(speeds, expected_hard, expected_total):
     pitches = [_pitch("hit_into_play", ev=s) for s in speeds]
     result = calc_05_bvp_hard_hit_rate(pitches)
-    assert result == pytest.approx((expected_hard / expected_total, expected_total))
+    assert result.value == pytest.approx(
+        (expected_hard / expected_total, expected_total)
+    )
 
 
 def test_calc_05_excludes_batted_balls_without_a_reading():
@@ -281,7 +289,7 @@ def test_calc_05_excludes_batted_balls_without_a_reading():
         _pitch("hit_into_play", ev=100.0),
         _pitch("hit_into_play", ev=None),  # tracking gap, not a soft-hit ball
     ]
-    assert calc_05_bvp_hard_hit_rate(pitches) == pytest.approx((1.0, 1))
+    assert calc_05_bvp_hard_hit_rate(pitches).value == pytest.approx((1.0, 1))
 
 
 def test_calc_05_ignores_pitches_not_put_in_play():
@@ -301,8 +309,8 @@ def test_calc_06_xba_and_xwoba_average_the_estimates():
         _pitch("hit_into_play", xba=0.100, xwoba=0.200),
         _pitch("hit_into_play", xba=0.300, xwoba=0.600),
     ]
-    assert calc_06_bvp_xba(pitches) == pytest.approx((0.200, 2))
-    assert calc_06_bvp_xwoba(pitches) == pytest.approx((0.400, 2))
+    assert calc_06_bvp_xba(pitches).value == pytest.approx((0.200, 2))
+    assert calc_06_bvp_xwoba(pitches).value == pytest.approx((0.400, 2))
 
 
 def test_calc_06_drops_batted_balls_missing_that_estimate():
@@ -310,8 +318,8 @@ def test_calc_06_drops_batted_balls_missing_that_estimate():
         _pitch("hit_into_play", xba=0.400, xwoba=None),
         _pitch("hit_into_play", xba=None, xwoba=0.900),
     ]
-    assert calc_06_bvp_xba(pitches) == pytest.approx((0.400, 1))
-    assert calc_06_bvp_xwoba(pitches) == pytest.approx((0.900, 1))
+    assert calc_06_bvp_xba(pitches).value == pytest.approx((0.400, 1))
+    assert calc_06_bvp_xwoba(pitches).value == pytest.approx((0.900, 1))
 
 
 def test_calc_06_no_contact_returns_none():
@@ -345,8 +353,8 @@ def test_calc_07_classifies_each_description(description, is_swing, is_whiff):
     if not is_swing:
         assert result is None
         return
-    assert result.denominator == 1
-    assert result.rate == (1.0 if is_whiff else 0.0)
+    assert result.value.denominator == 1
+    assert result.value.rate == (1.0 if is_whiff else 0.0)
 
 
 def test_calc_07_whiff_rate_over_mixed_swings():
@@ -357,7 +365,7 @@ def test_calc_07_whiff_rate_over_mixed_swings():
         + [_pitch("ball")] * 9
         + [_pitch("called_strike")]
     )
-    assert calc_07_bvp_whiff_rate(pitches) == pytest.approx((4 / 16, 16))
+    assert calc_07_bvp_whiff_rate(pitches).value == pytest.approx((4 / 16, 16))
 
 
 def test_calc_07_no_swings_returns_none():
@@ -374,17 +382,17 @@ def test_calc_08_putaway_rate_over_two_strike_pitches():
         _pitch("swinging_strike", events="strikeout", strikes=2),
         _pitch("swinging_strike", strikes=1),  # not a two-strike pitch
     ]
-    assert calc_08_bvp_putaway_rate(pitches) == pytest.approx((1 / 3, 3))
+    assert calc_08_bvp_putaway_rate(pitches).value == pytest.approx((1 / 3, 3))
 
 
 def test_calc_08_counts_strikeout_double_play():
     pitches = [_pitch("swinging_strike", events="strikeout_double_play", strikes=2)]
-    assert calc_08_bvp_putaway_rate(pitches) == pytest.approx((1.0, 1))
+    assert calc_08_bvp_putaway_rate(pitches).value == pytest.approx((1.0, 1))
 
 
 def test_calc_08_ignores_non_strikeout_events_ending_two_strike_counts():
     pitches = [_pitch("hit_into_play", events="single", strikes=2)]
-    assert calc_08_bvp_putaway_rate(pitches) == pytest.approx((0.0, 1))
+    assert calc_08_bvp_putaway_rate(pitches).value == pytest.approx((0.0, 1))
 
 
 def test_calc_08_no_two_strike_pitches_returns_none():
@@ -409,7 +417,7 @@ def test_compute_category_01_includes_statcast_keys():
         "CALC_07",
         "CALC_08",
     ]
-    assert results["CALC_05"] == pytest.approx((1.0, 1))
+    assert results["CALC_05"].value == pytest.approx((1.0, 1))
 
 
 def test_compute_category_01_without_pitches_leaves_statcast_keys_none():

@@ -79,10 +79,10 @@ def test_attach_category_01_adds_all_four_keys(monkeypatch):
     monkeypatch.setattr(sources, "fetch_bvp_statcast", lambda b, p, s: [])
     data = {"Player": "Someone"}
     attach_category_01(data, 592450, 543037, season=2026)
-    assert data["CALC_01"] == pytest.approx((2 / 6, 6))
-    assert data["CALC_02"] == pytest.approx((2 / 6, 6))
-    assert data["CALC_03"] == pytest.approx((2 / 6, 6))
-    assert data["CALC_04"] == pytest.approx((5 / 6, 6))
+    assert data["CALC_01"].value == pytest.approx((2 / 6, 6))
+    assert data["CALC_02"].value == pytest.approx((2 / 6, 6))
+    assert data["CALC_03"].value == pytest.approx((2 / 6, 6))
+    assert data["CALC_04"].value == pytest.approx((5 / 6, 6))
 
 
 def test_attach_category_01_skips_fetch_without_a_starter(monkeypatch):
@@ -199,7 +199,7 @@ def test_attach_category_01_pulls_statcast_when_a_starter_is_known(monkeypatch):
     data = {}
     attach_category_01(data, 518692, 554430, season=2026)
     assert seen == [(518692, 554430, 2026)]
-    assert data["CALC_07"] == pytest.approx((1.0, 1))
+    assert data["CALC_07"].value == pytest.approx((1.0, 1))
 
 
 def test_attach_category_01_skips_statcast_without_a_starter(monkeypatch):
