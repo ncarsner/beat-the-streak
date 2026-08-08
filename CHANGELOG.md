@@ -26,8 +26,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   called during a run yet** — see Notes.
 - `probable_pitcher_id` and `hydrate=probablePitcher` on the `/schedule` request: `fetch_schedule`
   records now carry `home_pitcher_id` / `away_pitcher_id` (`None` until announced).
-- `build_table_row`, extracted so the top and bottom halves of the output table share one row
-  builder instead of duplicating the cell formatting. The table's columns are unchanged.
 
 ### Changed
 - `process_game_lineup` now attaches `opposing_pitcher_id` to each lineup entry, resolving each
@@ -44,7 +42,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Notes
 - Category 1 is deliberately not wired into the daily run: no calculator is invoked, no BvP
-  request is made, and the output table is unchanged. These are being solidified and tested
+  request is made, and `probable_hitters` is unchanged line for line. These are being solidified and tested
   ahead of the composite model, where they will be consumed together. Shrinking a small BvP
   sample toward a prior belongs in `CALC_75` (Bayesian composite), not in the current
   last-5-game binomial ranking.

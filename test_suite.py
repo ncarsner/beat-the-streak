@@ -33,7 +33,6 @@ from main import (
     refresh_opposing_pitchers,
     fetch_bvp_stats,
     attach_bvp_calculators,
-    build_table_row,
     DEFAULT_COOLDOWN_DAYS,
 )
 from calculators import (
@@ -1749,35 +1748,3 @@ def test_process_game_lineup_cached_entry_predating_the_field_is_backfilled(
     process_game_lineup(g, cache, "2026-07-20", {}, all_players)
 
     assert all_players[0]["opposing_pitcher_id"] == 543037
-
-
-# ---- build_table_row ----
-
-
-def test_build_table_row_renders_the_display_columns():
-    data = {
-        "Player": "Bat",
-        "Team": "NYY",
-        "Hits": 5,
-        "At Bats": 10,
-        "Walks": 1,
-        "Strikeouts": 2,
-        "probability": 0.75,
-    }
-    assert build_table_row(data) == ["Bat", "NYY", "5-10", "1/2", "75.0%"]
-
-
-def test_build_table_row_ignores_bvp_keys_on_a_summary_entry():
-    """Category 1 outputs are not displayed; a row must not widen if they appear."""
-    data = {
-        "Player": "Bat",
-        "Team": "NYY",
-        "Hits": 5,
-        "At Bats": 10,
-        "Walks": 1,
-        "Strikeouts": 2,
-        "probability": 0.75,
-        "CALC_01": (0.302, 76),
-        "CALC_03": None,
-    }
-    assert len(build_table_row(data)) == 5

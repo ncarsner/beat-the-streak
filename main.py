@@ -455,17 +455,6 @@ def compile_player_data(
     return summary_data
 
 
-def build_table_row(data: dict) -> list[str]:
-    """Return one display row for *data*, a compiled player summary entry."""
-    return [
-        data["Player"],
-        data["Team"],
-        f"{data['Hits']}-{data['At Bats']}",
-        f"{data['Walks']}/{data['Strikeouts']}",
-        f"{data['probability']:.1%}",
-    ]
-
-
 def probable_hitters(summary_data, n=5):
     # Sort summary data based on descending probability
     summary_data.sort(key=lambda x: x["probability"], reverse=True)
@@ -483,13 +472,31 @@ def probable_hitters(summary_data, n=5):
     table.field_names = ["Player", "Team", "H-AB", "BB/K", "Prob %"]
 
     for data in top_players:
-        table.add_row(build_table_row(data))
+        probability = f"{data['probability']:.1%}"
+        table.add_row(
+            [
+                data["Player"],
+                data["Team"],
+                f"{data['Hits']}-{data['At Bats']}",
+                f"{data['Walks']}/{data['Strikeouts']}",
+                probability,
+            ]
+        )
 
     # Separator row
     table.add_row(["---"] * len(table.field_names))
 
     for data in low_players:
-        table.add_row(build_table_row(data))
+        probability = f"{data['probability']:.1%}"
+        table.add_row(
+            [
+                data["Player"],
+                data["Team"],
+                f"{data['Hits']}-{data['At Bats']}",
+                f"{data['Walks']}/{data['Strikeouts']}",
+                probability,
+            ]
+        )
 
     # Display the output
     print(table)

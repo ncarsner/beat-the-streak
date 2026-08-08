@@ -99,7 +99,9 @@ def _season_window(bvp: dict[str, Any], season: int, years: int) -> dict[str, in
     """Aggregate the seasons in the inclusive window ending at *season*."""
     earliest = season - years + 1
     return aggregate_lines(
-        line for year, line in bvp["by_season"].items() if earliest <= year <= season
+        line
+        for year, line in bvp.get("by_season", {}).items()
+        if earliest <= year <= season
     )
 
 
@@ -113,7 +115,7 @@ def calc_01_bvp_career_hit_rate(bvp: dict[str, Any]) -> BvPRate | None:
 
 def calc_02_bvp_season_hit_rate(bvp: dict[str, Any], season: int) -> BvPRate | None:
     """CALC_02 — H / PA head-to-head within *season* only."""
-    line = bvp["by_season"].get(season)
+    line = bvp.get("by_season", {}).get(season)
     if line is None:
         return None
     return _rate(line["hits"], line["plateAppearances"])
@@ -144,7 +146,7 @@ def calc_04_bvp_contact_rate(
         if line is None:
             return None
     else:
-        line = bvp["by_season"].get(season)
+        line = bvp.get("by_season", {}).get(season)
         if line is None:
             return None
     pa = line["plateAppearances"]
