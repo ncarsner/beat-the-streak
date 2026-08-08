@@ -8,11 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## 2026-08-07
 
 ### Added
-- `calculators.py`: Category 1 (batter-vs-pitcher) probability calculators from `ROADMAP.md` —
+- `calculators/` package, one module per `ROADMAP.md` category, with a naming convention meant
+  to carry all 11: `category_NN_<slug>.py` modules holding `calc_NN_<slug>` functions and a
+  `compute_category_NN` aggregate, `common.py` for shared types and counting-stat helpers, and
+  `sources.py` as the single module that touches the network. Pure calculator modules never
+  import `sources`, so their arithmetic tests need no request mocking.
+- `calculators/category_01_bvp_matchups.py`: Category 1 (batter-vs-pitcher) calculators —
   `CALC_01` career BvP hit rate, `CALC_02` season BvP hit rate, `CALC_03` trailing 3-calendar-year
   BvP hit rate, and `CALC_04` BvP contact rate. Pure functions with no network I/O; each returns
-  a `BvPRate` carrying both the rate and the plate appearances behind it, or `None` when the pair
-  has no shared history.
+  a `Rate` carrying both the value and the sample size behind it, or `None` when the pair has no
+  shared history.
 - `parse_bvp_stats`: normalizes a raw MLB Stats API `stats=vsPlayer` response into
   `{"career": ..., "by_season": {...}}`. Career is summed from the per-season splits, with the
   API's `vsPlayerTotal` group used only as a fallback. Both groups proved independently
@@ -20,7 +25,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   season split of 3 PA, then an empty season-split list alongside a populated 3 PA total.
   Deriving career from the splits keeps `CALC_01`'s sample from ever being smaller than
   `CALC_03`'s window over the same matchup.
-- `fetch_bvp_stats` / `attach_bvp_calculators` in `main.py`: the I/O half of Category 1, where
+- `fetch_bvp_stats` / `attach_category_01` in `calculators/sources.py`: the I/O half of
+  Category 1, where
   one `vsPlayer` request per batter covers all four calculators. A batter with no announced
   opposing starter gets all-`None` calculator keys without a request being made. **Neither is
   called during a run yet** — see Notes.

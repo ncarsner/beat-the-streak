@@ -8,7 +8,6 @@ from prettytable import PrettyTable
 from time import sleep
 import random
 
-from calculators import compute_bvp_calculators, parse_bvp_stats
 from teams import TEAM_ID_TO_ABBR
 
 
@@ -277,57 +276,6 @@ def scrape_player_data(
         "Strikeouts": strikeouts,
         "GameHourUTC": game_hour,
     }
-
-
-def fetch_bvp_stats(batter_id: int, pitcher_id: int) -> dict:
-    """Fetch head-to-head splits for *batter_id* against *pitcher_id*.
-
-    One request feeds every Category 1 calculator: `stats=vsPlayer` returns a
-    split per season the pair has faced each other plus a career total, so
-    CALC_01-04 need no follow-up calls. Returns an empty normalized payload on
-    request failure rather than raising.
-    """
-    try:
-        resp = requests.get(
-            f"{MLB_API_BASE}/people/{batter_id}/stats",
-            params={
-                "stats": "vsPlayer",
-                "group": "hitting",
-                "opposingPlayerId": pitcher_id,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        print(f"BvP fetch error for batter {batter_id} vs pitcher {pitcher_id} ({exc})")
-        return {"career": None, "by_season": {}}
-    return parse_bvp_stats(resp.json())
-
-
-def attach_bvp_calculators(
-    player_data: dict,
-    batter_id: int,
-    pitcher_id: int | None,
-    season: int | None = None,
-) -> dict:
-    """Add CALC_01-04 to *player_data* in place and return it.
-
-    With no announced opposing starter — or a lineup entry cached before this
-    field existed — every calculator resolves to None rather than being omitted,
-    so downstream consumers can rely on the keys being present.
-
-    Not called during a run yet: Category 1 outputs are not displayed and feed
-    nothing, so paying a request per batter would buy nothing. This is the seam
-    the composite model (CALC_75) will call once there is something to weight.
-    """
-    season = season or datetime.today().year
-    bvp = (
-        fetch_bvp_stats(batter_id, pitcher_id)
-        if pitcher_id is not None
-        else {"career": None, "by_season": {}}
-    )
-    player_data.update(compute_bvp_calculators(bvp, season))
-    return player_data
 
 
 def refresh_opposing_pitchers(players: list[dict], g: dict) -> list[dict]:

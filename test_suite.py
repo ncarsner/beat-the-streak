@@ -31,8 +31,6 @@ from main import (
     build_arg_parser,
     probable_pitcher_id,
     refresh_opposing_pitchers,
-    fetch_bvp_stats,
-    attach_bvp_calculators,
     DEFAULT_COOLDOWN_DAYS,
 )
 from calculators import (
@@ -43,8 +41,10 @@ from calculators import (
     calc_02_bvp_season_hit_rate,
     calc_03_bvp_recent_window_hit_rate,
     calc_04_bvp_contact_rate,
-    compute_bvp_calculators,
+    compute_category_01,
 )
+from calculators import sources
+from calculators.sources import attach_category_01, fetch_bvp_stats
 
 
 class FakeResponse:
@@ -1483,7 +1483,7 @@ def test_calc_04_returns_none_without_history():
     assert calc_04_bvp_contact_rate({"career": None, "by_season": {}}) is None
 
 
-def test_compute_bvp_calculators_returns_all_implemented_keys():
+def test_compute_category_01_returns_all_implemented_keys():
     bvp = parse_bvp_stats(
         _vsplayer_payload(
             [
@@ -1492,14 +1492,14 @@ def test_compute_bvp_calculators_returns_all_implemented_keys():
             ]
         )
     )
-    results = compute_bvp_calculators(bvp, 2026)
+    results = compute_category_01(bvp, 2026)
     assert sorted(results) == ["CALC_01", "CALC_02", "CALC_03", "CALC_04"]
     assert results["CALC_02"] == pytest.approx((2 / 6, 6))
     assert results["CALC_03"] == pytest.approx((6 / 16, 16))
 
 
-def test_compute_bvp_calculators_all_none_for_first_time_matchup():
-    results = compute_bvp_calculators({"career": None, "by_season": {}}, 2026)
+def test_compute_category_01_all_none_for_first_time_matchup():
+    results = compute_category_01({"career": None, "by_season": {}}, 2026)
     assert set(results.values()) == {None}
 
 
@@ -1633,48 +1633,48 @@ def test_fetch_bvp_stats_non_2xx_returns_empty_payload(monkeypatch):
     assert fetch_bvp_stats(592450, 543037) == {"career": None, "by_season": {}}
 
 
-# ---- attach_bvp_calculators ----
+# ---- attach_category_01 ----
 
 
-def test_attach_bvp_calculators_adds_all_four_keys(monkeypatch):
+def test_attach_category_01_adds_all_four_keys(monkeypatch):
     monkeypatch.setattr(
-        main,
+        sources,
         "fetch_bvp_stats",
         lambda b, p: parse_bvp_stats(
             _vsplayer_payload([_split(season=2026, pa=6, ab=6, h=2, so=1, bb=0)])
         ),
     )
     data = {"Player": "Someone"}
-    attach_bvp_calculators(data, 592450, 543037, season=2026)
+    attach_category_01(data, 592450, 543037, season=2026)
     assert data["CALC_01"] == pytest.approx((2 / 6, 6))
     assert data["CALC_02"] == pytest.approx((2 / 6, 6))
     assert data["CALC_03"] == pytest.approx((2 / 6, 6))
     assert data["CALC_04"] == pytest.approx((5 / 6, 6))
 
 
-def test_attach_bvp_calculators_skips_fetch_without_a_starter(monkeypatch):
+def test_attach_category_01_skips_fetch_without_a_starter(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        main, "fetch_bvp_stats", lambda b, p: calls.append((b, p)) or {}
+        sources, "fetch_bvp_stats", lambda b, p: calls.append((b, p)) or {}
     )
     data = {"Player": "Someone"}
-    attach_bvp_calculators(data, 592450, None, season=2026)
+    attach_category_01(data, 592450, None, season=2026)
     assert calls == []
     assert data["CALC_01"] is None
     assert data["CALC_04"] is None
 
 
-def test_attach_bvp_calculators_defaults_season_to_current_year(monkeypatch):
+def test_attach_category_01_defaults_season_to_current_year(monkeypatch):
     seasons = []
     monkeypatch.setattr(
-        main, "fetch_bvp_stats", lambda b, p: {"career": None, "by_season": {}}
+        sources, "fetch_bvp_stats", lambda b, p: {"career": None, "by_season": {}}
     )
     monkeypatch.setattr(
-        main,
-        "compute_bvp_calculators",
+        sources,
+        "compute_category_01",
         lambda bvp, season: seasons.append(season) or {},
     )
-    attach_bvp_calculators({}, 592450, 543037)
+    attach_category_01({}, 592450, 543037)
     assert seasons == [datetime.today().year]
 
 

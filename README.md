@@ -131,8 +131,31 @@ Use `--cooldown-days 0` to disable the cooldown and recheck every player on ever
 
 ### Batter-vs-pitcher calculators
 
-`calculators.py` implements the Category 1 (batter-vs-pitcher, "BvP") considerations from
-`ROADMAP.md`, using the MLB Stats API's `vsPlayer` stat type. One request per batter covers
+Calculators live in the `calculators/` package, one module per `ROADMAP.md` category, so a
+calculator sits with the others that share its data source:
+
+```
+calculators/
+    __init__.py                    # public surface
+    common.py                      # Rate + counting-stat helpers shared by all categories
+    category_01_bvp_matchups.py    # CALC_01-08
+    sources.py                     # the only module here that touches the network
+```
+
+The convention, applied to each category as it lands:
+
+| Thing | Pattern | Example |
+|---|---|---|
+| Module | `category_NN_<slug>.py` | `category_01_bvp_matchups.py` |
+| Calculator | `calc_NN_<slug>(...)` | `calc_01_bvp_career_hit_rate` |
+| Category aggregate | `compute_category_NN(...)` | `compute_category_01` |
+| Fetch (in `sources.py`) | `fetch_<subject>(...)` | `fetch_bvp_stats` |
+
+Pure calculator modules never import `sources`, which is what keeps the arithmetic testable
+without mocking a request.
+
+`category_01_bvp_matchups.py` implements the Category 1 (batter-vs-pitcher, "BvP")
+considerations, using the MLB Stats API's `vsPlayer` stat type. One request per batter covers
 all four — it returns a split for every season the pair has faced each other, plus a career
 total:
 
@@ -143,16 +166,17 @@ total:
 | `CALC_03` | BvP Recent Window Hit Rate | H / PA head-to-head over the last 3 calendar years |
 | `CALC_04` | BvP Contact Rate | (PA − SO − BB) / PA head-to-head |
 
-Each returns a `BvPRate` — the rate paired with the plate appearances behind it — or `None`
-when the pair has never faced each other, when no starter has been announced, or when the
-game begins with an unlisted opener.
+Each returns a `Rate` — the value paired with the sample size behind it — or `None` when the
+pair has never faced each other, when no starter has been announced, or when the game begins
+with an unlisted opener.
 
 **These calculators are not part of the daily run yet.** Nothing calls them, they do not appear
 in the output table, and they do not affect the ranking — no BvP request is made during a run.
 They are built and tested ahead of the composite model (`CALC_75`), which is where a BvP rate
 gets shrunk toward a prior before it can influence anything; a 1-for-2 career line is not
-evidence of a .500 hitter. `main.py` holds the I/O half ready for that release:
-`fetch_bvp_stats` (one request per batter, covering all four) and `attach_bvp_calculators`.
+evidence of a .500 hitter. `calculators/sources.py` holds the I/O half ready for that release:
+`fetch_bvp_stats` (one request per batter, covering all four) and `attach_category_01`.
+`main.py` imports nothing from the package.
 
 Supporting groundwork *is* live, since it costs no extra requests: `fetch_schedule` hydrates
 `probablePitcher`, and each lineup entry carries the `opposing_pitcher_id` of the other side's

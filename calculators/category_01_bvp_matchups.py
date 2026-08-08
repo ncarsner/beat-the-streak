@@ -1,56 +1,36 @@
-"""Category 1 probability calculators — direct pitcher-vs-batter (BvP) matchups.
+"""Category 1 — Direct Pitcher vs. Batter (BvP) Matchups (`CALC_01`-`CALC_08`).
 
-Pure functions over an already-normalized BvP payload; no network I/O lives here.
-See `ROADMAP.md` for the source definitions of each `CALC_nn`.
+Pure functions over an already-normalized BvP payload; the network half lives in
+`calculators.sources`. See `ROADMAP.md` for the source definition of each
+`CALC_NN`.
 
-The normalized payload is produced by `parse_bvp_stats` and has the shape::
+The payload is produced by `parse_bvp_stats` and has the shape::
 
     {"career": <line> | None, "by_season": {2026: <line>, ...}}
 
-where a *line* is a dict of counting stats (`plateAppearances`, `atBats`, `hits`,
-`strikeOuts`, `baseOnBalls`). Every calculator returns a `BvPRate` or ``None`` when
-the matchup has no plate appearances to divide by — an empty history is absence of
-evidence, not a 0.0 rate, and callers must be able to tell the two apart.
+where a *line* is a dict of `calculators.common.COUNTING_STATS`.
+
+`CALC_05`-`CALC_08` (hard-hit %, xBA/xwOBA, whiff rate, putaway rate) are not
+implemented: they require Statcast pitch-level data, which the MLB Stats API
+does not expose per batter-pitcher pair.
 """
 
-from typing import Any, Iterable, NamedTuple
+from typing import Any
 
+from calculators.common import (
+    COUNTING_STATS,
+    Rate,
+    aggregate_lines,
+    rate_or_none,
+)
 
-# Counting stats carried through from a MLB Stats API vsPlayer split.
-COUNTING_STATS = ("plateAppearances", "atBats", "hits", "strikeOuts", "baseOnBalls")
 
 # CALC_03's window: the current season plus the two prior calendar years.
 RECENT_WINDOW_YEARS = 3
 
 
-class BvPRate(NamedTuple):
-    """A rate paired with the plate appearances it was computed over.
-
-    `denominator` is the sample size, kept alongside the rate so downstream
-    weighting (CALC_75) can shrink a 1-for-2 career line toward a prior instead
-    of reading it as .500.
-    """
-
-    rate: float
-    denominator: int
-
-
-def empty_line() -> dict[str, int]:
-    """Return a zeroed counting-stat line."""
-    return dict.fromkeys(COUNTING_STATS, 0)
-
-
-def aggregate_lines(lines: Iterable[dict[str, Any]]) -> dict[str, int]:
-    """Sum *lines* field by field, treating missing keys as 0."""
-    total = empty_line()
-    for line in lines:
-        for stat in COUNTING_STATS:
-            total[stat] += line.get(stat, 0) or 0
-    return total
-
-
 def parse_bvp_stats(payload: dict[str, Any]) -> dict[str, Any]:
-    """Normalize a raw `stats=vsPlayer` response into the calculator payload.
+    """Normalize a raw `stats=vsPlayer` response into the category's payload.
 
     A single `vsPlayer` request returns one split per season the pair has faced
     each other, plus a `vsPlayerTotal` group holding the API's own career line
@@ -89,12 +69,6 @@ def parse_bvp_stats(payload: dict[str, Any]) -> dict[str, Any]:
     return {"career": career, "by_season": by_season}
 
 
-def _rate(numerator: int, denominator: int) -> BvPRate | None:
-    if denominator <= 0:
-        return None
-    return BvPRate(numerator / denominator, denominator)
-
-
 def _season_window(bvp: dict[str, Any], season: int, years: int) -> dict[str, int]:
     """Aggregate the seasons in the inclusive window ending at *season*."""
     earliest = season - years + 1
@@ -105,25 +79,25 @@ def _season_window(bvp: dict[str, Any], season: int, years: int) -> dict[str, in
     )
 
 
-def calc_01_bvp_career_hit_rate(bvp: dict[str, Any]) -> BvPRate | None:
+def calc_01_bvp_career_hit_rate(bvp: dict[str, Any]) -> Rate | None:
     """CALC_01 — H / PA across every career head-to-head plate appearance."""
     career = bvp.get("career")
     if career is None:
         return None
-    return _rate(career["hits"], career["plateAppearances"])
+    return rate_or_none(career["hits"], career["plateAppearances"])
 
 
-def calc_02_bvp_season_hit_rate(bvp: dict[str, Any], season: int) -> BvPRate | None:
+def calc_02_bvp_season_hit_rate(bvp: dict[str, Any], season: int) -> Rate | None:
     """CALC_02 — H / PA head-to-head within *season* only."""
     line = bvp.get("by_season", {}).get(season)
     if line is None:
         return None
-    return _rate(line["hits"], line["plateAppearances"])
+    return rate_or_none(line["hits"], line["plateAppearances"])
 
 
 def calc_03_bvp_recent_window_hit_rate(
     bvp: dict[str, Any], season: int, years: int = RECENT_WINDOW_YEARS
-) -> BvPRate | None:
+) -> Rate | None:
     """CALC_03 — H / PA head-to-head over the last *years* calendar years.
 
     The window is inclusive of *season*, so the default covers `season - 2`
@@ -131,37 +105,28 @@ def calc_03_bvp_recent_window_hit_rate(
     `vsPlayer5Y` stat type, which is fixed at five years.
     """
     line = _season_window(bvp, season, years)
-    return _rate(line["hits"], line["plateAppearances"])
+    return rate_or_none(line["hits"], line["plateAppearances"])
 
 
 def calc_04_bvp_contact_rate(
     bvp: dict[str, Any], season: int | None = None
-) -> BvPRate | None:
+) -> Rate | None:
     """CALC_04 — (PA - SO - BB) / PA head-to-head: how often the matchup ends in contact.
 
     Career scope by default; pass *season* to restrict to a single season.
     """
     if season is None:
         line = bvp.get("career")
-        if line is None:
-            return None
     else:
         line = bvp.get("by_season", {}).get(season)
-        if line is None:
-            return None
+    if line is None:
+        return None
     pa = line["plateAppearances"]
-    return _rate(pa - line["strikeOuts"] - line["baseOnBalls"], pa)
+    return rate_or_none(pa - line["strikeOuts"] - line["baseOnBalls"], pa)
 
 
-def compute_bvp_calculators(
-    bvp: dict[str, Any], season: int
-) -> dict[str, BvPRate | None]:
-    """Run every implemented Category 1 calculator over *bvp*.
-
-    CALC_05-08 (hard-hit %, xBA/xwOBA, whiff rate, putaway rate) are absent:
-    they require Statcast pitch-level data, which the MLB Stats API does not
-    expose per batter-pitcher pair.
-    """
+def compute_category_01(bvp: dict[str, Any], season: int) -> dict[str, Rate | None]:
+    """Run every implemented Category 1 calculator over *bvp*."""
     return {
         "CALC_01": calc_01_bvp_career_hit_rate(bvp),
         "CALC_02": calc_02_bvp_season_hit_rate(bvp, season),
