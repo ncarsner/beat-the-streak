@@ -326,6 +326,28 @@ def attach_bvp_calculators(
     return player_data
 
 
+def refresh_opposing_pitchers(players: list[dict], g: dict) -> list[dict]:
+    """Re-resolve each cached player's opposing starter against the game record *g*.
+
+    Cached lineup entries carry `team_id` but not which side they batted on, so
+    the opponent is resolved by team instead. A player whose `team_id` matches
+    neither side keeps whatever the cache held, rather than being blanked.
+    """
+    opponent_by_team = {
+        g["home_team_id"]: g.get("away_pitcher_id"),
+        g["away_team_id"]: g.get("home_pitcher_id"),
+    }
+    return [
+        {
+            **p,
+            "opposing_pitcher_id": opponent_by_team.get(
+                p.get("team_id"), p.get("opposing_pitcher_id")
+            ),
+        }
+        for p in players
+    ]
+
+
 def process_game_lineup(
     g: dict,
     queried_games_cache: dict,
@@ -340,6 +362,9 @@ def process_game_lineup(
     posted lineup. An already-queried game still contributes its cached
     players to *all_players* — the cache exists to skip redundant lineup
     fetches within the same day, not to make later same-day runs incomplete.
+    Cached players have their opposing starter re-resolved from *g* on every
+    run: a lineup can post before the probable pitcher is announced, and the
+    cached `None` would otherwise stick for the rest of the day.
 
     Returns True if a lineup fetch was attempted, False if the game was skipped.
     """
@@ -349,7 +374,9 @@ def process_game_lineup(
     if isinstance(cached_entry, dict) and cached_entry.get("date") == today:
         schedule_map[g["home_team_id"]] = hour
         schedule_map[g["away_team_id"]] = hour
-        all_players.extend(cached_entry.get("players", []))
+        refreshed = refresh_opposing_pitchers(cached_entry.get("players", []), g)
+        cached_entry["players"] = refreshed
+        all_players.extend(refreshed)
         return False
 
     lineup = fetch_lineup(game_pk)

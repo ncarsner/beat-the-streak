@@ -14,9 +14,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   a `BvPRate` carrying both the rate and the plate appearances behind it, or `None` when the pair
   has no shared history.
 - `parse_bvp_stats`: normalizes a raw MLB Stats API `stats=vsPlayer` response into
-  `{"career": ..., "by_season": {...}}`. Career is summed from the per-season splits rather than
-  read from the API's `vsPlayerTotal` group, which was observed reporting 2 PA for a matchup whose
-  only season split showed 3 PA.
+  `{"career": ..., "by_season": {...}}`. Career is summed from the per-season splits, with the
+  API's `vsPlayerTotal` group used only as a fallback. Both groups proved independently
+  unreliable on the same batter-pitcher pair minutes apart: a `vsPlayerTotal` of 2 PA against a
+  season split of 3 PA, then an empty season-split list alongside a populated 3 PA total.
+  Deriving career from the splits keeps `CALC_01`'s sample from ever being smaller than
+  `CALC_03`'s window over the same matchup.
 - `fetch_bvp_stats` / `attach_bvp_calculators` in `main.py`: one `vsPlayer` request per batter
   covers all four calculators, folded into the existing per-player loop so no extra throttle
   delay is incurred. A batter with no announced opposing starter gets all-`None` calculator keys
@@ -32,6 +35,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   batter against the *other* side's probable starter before the home/away lists are flattened.
   Lineup entries cached earlier the same day predate this field and degrade to `None` rather than
   failing.
+- `refresh_opposing_pitchers`: cached lineup entries have their opposing starter re-resolved (by
+  `team_id`, since the cache does not record which side a batter was on) on every run, and the
+  cache entry is updated in place. A lineup can post before the probable pitcher is announced —
+  without this, the `None` written on that tick would stick for the rest of the day, since the
+  same-day cache short-circuits the lineup fetch. No extra request is made.
+- `README.md`: corrected the documented `MAX_PLAYERS` default from `10` to `50`, which it has
+  been since commit `f812694`.
 
 ### Notes
 - BvP values are informational only — the ranking is still sorted by the last-5-game binomial

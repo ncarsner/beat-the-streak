@@ -30,6 +30,7 @@ from main import (
     dispatch_scheduled_sms,
     build_arg_parser,
     probable_pitcher_id,
+    refresh_opposing_pitchers,
     fetch_bvp_stats,
     attach_bvp_calculators,
     format_bvp,
@@ -809,7 +810,8 @@ def test_process_game_lineup_already_queried_today_skips_fetch_but_reuses_player
 
     assert result is False
     assert fetch_calls == []  # fetch_lineup was never called
-    assert all_players == cached_players  # cached players still surface in output
+    # cached players still surface in output, with their opponent re-resolved
+    assert all_players == _with_opponent(cached_players, 554430)
     assert schedule_map[119] == 19
     assert schedule_map[137] == 19
 
@@ -1801,3 +1803,75 @@ def test_probable_hitters_prints_bvp_headers(capsys):
     out = capsys.readouterr().out
     assert "BvP Car" in out and "BvP 3Y" in out
     assert ".300 (20)" in out
+
+
+# ---- refresh_opposing_pitchers: probables announced after the lineup posts ----
+
+
+def test_refresh_opposing_pitchers_resolves_by_team():
+    players = [
+        {"id": 111, "team_id": 119, "opposing_pitcher_id": None},
+        {"id": 222, "team_id": 137, "opposing_pitcher_id": None},
+    ]
+    g = _make_schedule_game(home_pitcher_id=543037, away_pitcher_id=554430)
+    refreshed = refresh_opposing_pitchers(players, g)
+    assert [p["opposing_pitcher_id"] for p in refreshed] == [554430, 543037]
+
+
+def test_refresh_opposing_pitchers_keeps_cached_value_for_unknown_team():
+    players = [{"id": 111, "team_id": 999, "opposing_pitcher_id": 660271}]
+    g = _make_schedule_game(home_pitcher_id=543037, away_pitcher_id=554430)
+    assert refresh_opposing_pitchers(players, g)[0]["opposing_pitcher_id"] == 660271
+
+
+def test_refresh_opposing_pitchers_leaves_none_while_starter_unannounced():
+    players = [{"id": 111, "team_id": 119}]
+    g = _make_schedule_game(home_pitcher_id=None, away_pitcher_id=None)
+    assert refresh_opposing_pitchers(players, g)[0]["opposing_pitcher_id"] is None
+
+
+def test_refresh_opposing_pitchers_does_not_mutate_input():
+    players = [{"id": 111, "team_id": 119, "opposing_pitcher_id": None}]
+    g = _make_schedule_game(home_pitcher_id=543037, away_pitcher_id=554430)
+    refresh_opposing_pitchers(players, g)
+    assert players[0]["opposing_pitcher_id"] is None
+
+
+def test_process_game_lineup_cached_entry_picks_up_a_late_announced_starter(
+    monkeypatch,
+):
+    """A lineup can post before the probable does; the cached None must not stick."""
+    fetch_calls = []
+    monkeypatch.setattr(
+        main,
+        "fetch_lineup",
+        lambda pk: fetch_calls.append(pk) or {"home": [], "away": []},
+    )
+
+    cached_players = [
+        {"id": 111, "fullName": "Home Bat", "team_id": 119, "opposing_pitcher_id": None}
+    ]
+    cache = {"700001": {"date": "2026-07-20", "players": cached_players}}
+    all_players = []
+    g = _make_schedule_game(home_pitcher_id=543037, away_pitcher_id=554430)
+    result = process_game_lineup(g, cache, "2026-07-20", {}, all_players)
+
+    assert result is False
+    assert fetch_calls == []  # still no redundant lineup fetch
+    assert all_players[0]["opposing_pitcher_id"] == 554430
+    # the cache converges too, so the fix survives a save/load round trip
+    assert cache["700001"]["players"][0]["opposing_pitcher_id"] == 554430
+
+
+def test_process_game_lineup_cached_entry_predating_the_field_is_backfilled(
+    monkeypatch,
+):
+    monkeypatch.setattr(main, "fetch_lineup", lambda pk: {"home": [], "away": []})
+
+    cached_players = [{"id": 222, "fullName": "Away Bat", "team_id": 137}]
+    cache = {"700001": {"date": "2026-07-20", "players": cached_players}}
+    all_players = []
+    g = _make_schedule_game(home_pitcher_id=543037, away_pitcher_id=554430)
+    process_game_lineup(g, cache, "2026-07-20", {}, all_players)
+
+    assert all_players[0]["opposing_pitcher_id"] == 543037

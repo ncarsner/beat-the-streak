@@ -77,7 +77,7 @@ A player is skipped if they have no game log for the season, haven't played with
 imminent games so the tool only fires when lineups are actually relevant. Manual mode is
 useful for ad-hoc runs where you want to see all games still to be played today.
 
-`MAX_PLAYERS` (default `10`) in `main.py` caps the total number of players processed per run
+`MAX_PLAYERS` (default `50`) in `main.py` caps the total number of players processed per run
 after window and lineup selection.
 
 ### SMS notifications
@@ -154,26 +154,31 @@ so weighting them belongs in the Bayesian composite (`CALC_75`), which is not ye
 pitch-level data that the MLB Stats API does not expose per batter-pitcher pair, and are not
 implemented.
 
-Career totals are summed from the per-season splits rather than read from the API's own
-`vsPlayerTotal` line, which has been observed to disagree with them.
+The API's two groups are independently unreliable, so career totals are summed from the
+per-season splits and the API's own `vsPlayerTotal` line is used only as a fallback. Both
+failure modes have been observed live on the same batter-pitcher pair minutes apart: a
+`vsPlayerTotal` of 2 PA against a season split of 3 PA, and an empty season-split list
+alongside a populated 3 PA total. Deriving career from the splits keeps `CALC_01`'s sample
+from ever being smaller than `CALC_03`'s window over the same matchup; when no splits come
+back at all, `CALC_02` and `CALC_03` are `None` while `CALC_01` still reports the total.
 
 ### Output format
 
 ```
 +----------------------------------------------------------------------+
 |                            July 11, 2026                             |
-+------------------+------+-------+------+---------+-----------+--------+
-| Player           | Team | H-AB  | BB/K | Prob %  | BvP Car   | BvP 3Y |
-+------------------+------+-------+------+---------+-----------+--------+
-| Luis Arraez      | SD   | 8-20  | 3/0  | 90.5%   | .316 (19) | .400 (5)|
-| Manny Machado    | SD   | 6-16  | 4/4  | 84.7%   | -         | -      |
-| ...              | ...  | ...   | ...  | ...     | ...       | ...    |
-+------------------+------+-------+------+---------+-----------+--------+
-| ---              | ---  | ---   | ---  | ---     | ---       | ---    |
-+------------------+------+-------+------+---------+-----------+--------+
-| TJ Friedl        | CIN  | 1-14  | 1/6  | 19.9%   | .000 (3)  | .000 (3)|
-| ...              | ...  | ...   | ...  | ...     | ...       | ...    |
-+------------------+------+-------+------+---------+-----------+--------+
++------------------+------+-------+------+---------+-----------+-----------+
+| Player           | Team | H-AB  | BB/K | Prob %  | BvP Car   | BvP 3Y    |
++------------------+------+-------+------+---------+-----------+-----------+
+| Luis Arraez      | SD   | 8-20  | 3/0  | 90.5%   | .316 (19) | .400 (5)  |
+| Manny Machado    | SD   | 6-16  | 4/4  | 84.7%   | -         | -         |
+| ...              | ...  | ...   | ...  | ...     | ...       | ...       |
++------------------+------+-------+------+---------+-----------+-----------+
+| ---              | ---  | ---   | ---  | ---     | ---       | ---       |
++------------------+------+-------+------+---------+-----------+-----------+
+| TJ Friedl        | CIN  | 1-14  | 1/6  | 19.9%   | .000 (3)  | .000 (3)  |
+| ...              | ...  | ...   | ...  | ...     | ...       | ...       |
++------------------+------+-------+------+---------+-----------+-----------+
 ```
 
 `BvP Car` (`CALC_01`) and `BvP 3Y` (`CALC_03`) show the head-to-head rate followed by the
