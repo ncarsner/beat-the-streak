@@ -20,15 +20,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   season split of 3 PA, then an empty season-split list alongside a populated 3 PA total.
   Deriving career from the splits keeps `CALC_01`'s sample from ever being smaller than
   `CALC_03`'s window over the same matchup.
-- `fetch_bvp_stats` / `attach_bvp_calculators` in `main.py`: one `vsPlayer` request per batter
-  covers all four calculators, folded into the existing per-player loop so no extra throttle
-  delay is incurred. A batter with no announced opposing starter gets all-`None` calculator keys
-  without a request being made.
+- `fetch_bvp_stats` / `attach_bvp_calculators` in `main.py`: the I/O half of Category 1, where
+  one `vsPlayer` request per batter covers all four calculators. A batter with no announced
+  opposing starter gets all-`None` calculator keys without a request being made. **Neither is
+  called during a run yet** — see Notes.
 - `probable_pitcher_id` and `hydrate=probablePitcher` on the `/schedule` request: `fetch_schedule`
   records now carry `home_pitcher_id` / `away_pitcher_id` (`None` until announced).
-- `BvP Car` and `BvP 3Y` columns in the output table, rendered as `.302 (76)` — rate over sample
-  size — or `-` when the matchup has no history. Extracted `build_table_row` / `format_bvp` so the
-  top and bottom halves of the table share one row builder.
+- `build_table_row`, extracted so the top and bottom halves of the output table share one row
+  builder instead of duplicating the cell formatting. The table's columns are unchanged.
 
 ### Changed
 - `process_game_lineup` now attaches `opposing_pitcher_id` to each lineup entry, resolving each
@@ -44,9 +43,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   been since commit `f812694`.
 
 ### Notes
-- BvP values are informational only — the ranking is still sorted by the last-5-game binomial
-  probability. Shrinking a small BvP sample toward a prior belongs in `CALC_75` (Bayesian
-  composite), which is not yet implemented.
+- Category 1 is deliberately not wired into the daily run: no calculator is invoked, no BvP
+  request is made, and the output table is unchanged. These are being solidified and tested
+  ahead of the composite model, where they will be consumed together. Shrinking a small BvP
+  sample toward a prior belongs in `CALC_75` (Bayesian composite), not in the current
+  last-5-game binomial ranking.
+- `fetch_schedule`'s `probablePitcher` hydration and the per-batter `opposing_pitcher_id` *are*
+  live, since both are free — the hydration rides an existing request and the resolution is
+  local. They are the inputs `fetch_bvp_stats` will need.
 - `CALC_05`-`CALC_08` (BvP hard-hit %, xBA/xwOBA, whiff rate, putaway rate) are not implemented:
   they need Statcast pitch-level data the MLB Stats API does not expose per batter-pitcher pair.
 

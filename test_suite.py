@@ -33,12 +33,10 @@ from main import (
     refresh_opposing_pitchers,
     fetch_bvp_stats,
     attach_bvp_calculators,
-    format_bvp,
     build_table_row,
     DEFAULT_COOLDOWN_DAYS,
 )
 from calculators import (
-    BvPRate,
     aggregate_lines,
     empty_line,
     parse_bvp_stats,
@@ -1681,130 +1679,6 @@ def test_attach_bvp_calculators_defaults_season_to_current_year(monkeypatch):
     assert seasons == [datetime.today().year]
 
 
-def test_compile_player_data_attaches_bvp_for_qualifying_players(monkeypatch):
-    monkeypatch.setattr(main, "sleep", lambda _: None)
-    monkeypatch.setattr(
-        main,
-        "scrape_player_data",
-        lambda player_id, player_name, team_id, schedule_map=None: {
-            "Player": player_name,
-            "At Bats": 10,
-            "Hits": 5,
-            "Walks": 1,
-            "Strikeouts": 2,
-        },
-    )
-    seen = []
-    monkeypatch.setattr(
-        main,
-        "fetch_bvp_stats",
-        lambda batter_id, pitcher_id: (
-            seen.append((batter_id, pitcher_id)) or {"career": None, "by_season": {}}
-        ),
-    )
-    players = [{**_make_player("Bat", 1), "opposing_pitcher_id": 543037}]
-    result = compile_player_data(players, limit=None)
-    assert seen == [(1, 543037)]
-    assert "CALC_01" in result[0]
-
-
-def test_compile_player_data_tolerates_lineup_entry_cached_before_bvp(monkeypatch):
-    """Players cached earlier today predate opposing_pitcher_id — degrade, don't crash."""
-    monkeypatch.setattr(main, "sleep", lambda _: None)
-    monkeypatch.setattr(
-        main,
-        "scrape_player_data",
-        lambda player_id, player_name, team_id, schedule_map=None: {
-            "Player": player_name,
-            "At Bats": 10,
-            "Hits": 5,
-            "Walks": 1,
-            "Strikeouts": 2,
-        },
-    )
-    fetch_calls = []
-    monkeypatch.setattr(
-        main, "fetch_bvp_stats", lambda b, p: fetch_calls.append(b) or {}
-    )
-    result = compile_player_data([_make_player("Legacy", 1)], limit=None)
-    assert fetch_calls == []
-    assert result[0]["CALC_01"] is None
-
-
-# ---- BvP table rendering ----
-
-
-@pytest.mark.parametrize(
-    "rate, expected",
-    [
-        (None, "-"),
-        (BvPRate(0.302, 76), ".302 (76)"),
-        (BvPRate(0.0, 3), ".000 (3)"),
-        (BvPRate(1.0, 2), "1.000 (2)"),
-        (BvPRate(1 / 3, 3), ".333 (3)"),
-    ],
-)
-def test_format_bvp(rate, expected):
-    assert format_bvp(rate) == expected
-
-
-def test_build_table_row_includes_bvp_columns():
-    data = {
-        "Player": "Bat",
-        "Team": "NYY",
-        "Hits": 5,
-        "At Bats": 10,
-        "Walks": 1,
-        "Strikeouts": 2,
-        "probability": 0.75,
-        "CALC_01": BvPRate(0.302, 76),
-        "CALC_03": BvPRate(0.25, 4),
-    }
-    assert build_table_row(data) == [
-        "Bat",
-        "NYY",
-        "5-10",
-        "1/2",
-        "75.0%",
-        ".302 (76)",
-        ".250 (4)",
-    ]
-
-
-def test_build_table_row_without_bvp_keys_renders_dashes():
-    data = {
-        "Player": "Bat",
-        "Team": "NYY",
-        "Hits": 5,
-        "At Bats": 10,
-        "Walks": 1,
-        "Strikeouts": 2,
-        "probability": 0.75,
-    }
-    assert build_table_row(data)[-2:] == ["-", "-"]
-
-
-def test_probable_hitters_prints_bvp_headers(capsys):
-    summary = [
-        {
-            "Player": f"P{i}",
-            "Team": "NYY",
-            "Hits": i,
-            "At Bats": 10,
-            "Walks": 1,
-            "Strikeouts": 2,
-            "probability": i / 10,
-            "CALC_01": BvPRate(0.3, 20),
-            "CALC_03": None,
-        }
-        for i in range(1, 4)
-    ]
-    probable_hitters(summary, n=1)
-    out = capsys.readouterr().out
-    assert "BvP Car" in out and "BvP 3Y" in out
-    assert ".300 (20)" in out
-
-
 # ---- refresh_opposing_pitchers: probables announced after the lineup posts ----
 
 
@@ -1875,3 +1749,35 @@ def test_process_game_lineup_cached_entry_predating_the_field_is_backfilled(
     process_game_lineup(g, cache, "2026-07-20", {}, all_players)
 
     assert all_players[0]["opposing_pitcher_id"] == 543037
+
+
+# ---- build_table_row ----
+
+
+def test_build_table_row_renders_the_display_columns():
+    data = {
+        "Player": "Bat",
+        "Team": "NYY",
+        "Hits": 5,
+        "At Bats": 10,
+        "Walks": 1,
+        "Strikeouts": 2,
+        "probability": 0.75,
+    }
+    assert build_table_row(data) == ["Bat", "NYY", "5-10", "1/2", "75.0%"]
+
+
+def test_build_table_row_ignores_bvp_keys_on_a_summary_entry():
+    """Category 1 outputs are not displayed; a row must not widen if they appear."""
+    data = {
+        "Player": "Bat",
+        "Team": "NYY",
+        "Hits": 5,
+        "At Bats": 10,
+        "Walks": 1,
+        "Strikeouts": 2,
+        "probability": 0.75,
+        "CALC_01": (0.302, 76),
+        "CALC_03": None,
+    }
+    assert len(build_table_row(data)) == 5

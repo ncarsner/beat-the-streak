@@ -8,7 +8,7 @@ from prettytable import PrettyTable
 from time import sleep
 import random
 
-from calculators import BvPRate, compute_bvp_calculators, parse_bvp_stats
+from calculators import compute_bvp_calculators, parse_bvp_stats
 from teams import TEAM_ID_TO_ABBR
 
 
@@ -315,6 +315,10 @@ def attach_bvp_calculators(
     With no announced opposing starter — or a lineup entry cached before this
     field existed — every calculator resolves to None rather than being omitted,
     so downstream consumers can rely on the keys being present.
+
+    Not called during a run yet: Category 1 outputs are not displayed and feed
+    nothing, so paying a request per batter would buy nothing. This is the seam
+    the composite model (CALC_75) will call once there is something to weight.
     """
     season = season or datetime.today().year
     bvp = (
@@ -440,9 +444,6 @@ def compile_player_data(
             player_data["probability"] = binomial_probability(
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
-            attach_bvp_calculators(
-                player_data, player_id, player.get("opposing_pitcher_id")
-            )
             summary_data.append(player_data)
             print(f"ok  ({player_data['Hits']}-{player_data['At Bats']})")
             cache.pop(str(player_id), None)
@@ -454,13 +455,6 @@ def compile_player_data(
     return summary_data
 
 
-def format_bvp(rate: BvPRate | None) -> str:
-    """Render a BvP rate as `.302 (76)` — rate over the PAs behind it — or `-` if unfaced."""
-    if rate is None:
-        return "-"
-    return f"{rate.rate:.3f}".lstrip("0") + f" ({rate.denominator})"
-
-
 def build_table_row(data: dict) -> list[str]:
     """Return one display row for *data*, a compiled player summary entry."""
     return [
@@ -469,8 +463,6 @@ def build_table_row(data: dict) -> list[str]:
         f"{data['Hits']}-{data['At Bats']}",
         f"{data['Walks']}/{data['Strikeouts']}",
         f"{data['probability']:.1%}",
-        format_bvp(data.get("CALC_01")),
-        format_bvp(data.get("CALC_03")),
     ]
 
 
@@ -488,17 +480,7 @@ def probable_hitters(summary_data, n=5):
     table = PrettyTable()
     today = datetime.today()
     table.title = f"{today.strftime('%B')} {today.day}, {today.year}"
-    # BvP columns are informational only — the sort key stays the last-5-game
-    # binomial probability, since a 1-for-2 career line is not evidence of .500.
-    table.field_names = [
-        "Player",
-        "Team",
-        "H-AB",
-        "BB/K",
-        "Prob %",
-        "BvP Car",
-        "BvP 3Y",
-    ]
+    table.field_names = ["Player", "Team", "H-AB", "BB/K", "Prob %"]
 
     for data in top_players:
         table.add_row(build_table_row(data))
