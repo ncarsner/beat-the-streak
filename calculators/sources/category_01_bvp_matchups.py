@@ -15,7 +15,12 @@ from datetime import date, datetime
 import requests
 
 from calculators.category_01_bvp_matchups import parse_bvp_stats
-from calculators.sources.common import _clean
+from calculators.sources.common import (
+    _cache_path,
+    _clean,
+    _read_statcast_cache,
+    _write_statcast_cache,
+)
 from mlb_api import MLB_API_BASE
 
 
@@ -67,9 +72,19 @@ def fetch_bvp_statcast(
 
     try:
         import pandas as pd
-        from pybaseball import statcast_batter
 
-        frame = statcast_batter(start, end, batter_id)
+        # Cache lookup: a hit skips the pybaseball import entirely (3.4s saving).
+        cache_path = _cache_path("batter", batter_id, season)
+        frame = _read_statcast_cache(cache_path)
+        if frame is None:
+            from pybaseball import statcast_batter
+
+            frame = statcast_batter(start, end, batter_id)
+            # Only cache a non-empty frame with a pitcher column.  An empty
+            # result means no Statcast coverage for this batter/season;
+            # re-fetching next run is correct — treat absence as unsettled.
+            if frame is not None and not frame.empty and "pitcher" in frame.columns:
+                _write_statcast_cache(cache_path, frame)
     except Exception as exc:  # noqa: BLE001 - third-party call, failure modes undocumented
         print(f"Statcast fetch failed for batter {batter_id} ({exc})")
         return []

@@ -74,6 +74,19 @@ def _no_live_network(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect_ex", _blocked_ex)
 
 
+@pytest.fixture(autouse=True)
+def _redirect_statcast_cache(tmp_path, monkeypatch):
+    """Redirect the Statcast cache to a per-test temp directory.
+
+    Without this, a real .cache/statcast/ file on disk can satisfy a cache
+    lookup inside fetch_bvp_statcast, causing the test to skip the stubbed
+    pybaseball call and silently pass or fail for the wrong reason.
+    """
+    import calculators.sources.common as _sources_common
+
+    monkeypatch.setattr(_sources_common, "CACHE_DIR", tmp_path / "statcast")
+
+
 class FakeResponse:
     def __init__(self, json_data, status_code=200):
         self._json_data = json_data
