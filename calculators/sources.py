@@ -10,7 +10,7 @@ Nothing here is called during a run yet; these are the seams the composite model
 (`CALC_75`) will call once there is something to weight.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 import requests
 
@@ -26,6 +26,72 @@ def empty_bvp() -> dict:
     shared instance would let one caller's edit leak into every later lookup.
     """
     return {"career": None, "by_season": {}}
+
+
+# Statcast pitch fields the Category 1 calculators read. Anything else in the
+# response is dropped at the boundary so the pure calculators never see a
+# DataFrame or a NaN.
+STATCAST_FIELDS = (
+    "description",
+    "events",
+    "strikes",
+    "launch_speed",
+    "estimated_ba_using_speedangle",
+    "estimated_woba_using_speedangle",
+)
+
+# Statcast's first full season; nothing earlier can be fetched.
+STATCAST_FIRST_SEASON = 2015
+
+
+def _clean(value):
+    """Convert a pandas missing value to None, leaving everything else alone."""
+    if value is None:
+        return None
+    # NaN is the only value not equal to itself; this avoids importing pandas.
+    if isinstance(value, float) and value != value:
+        return None
+    return value
+
+
+def fetch_bvp_statcast(
+    batter_id: int,
+    pitcher_id: int,
+    season: int | None = None,
+) -> list[dict]:
+    """Return one normalized record per pitch *batter_id* saw from *pitcher_id*.
+
+    Feeds CALC_05-08. Scoped to a single *season* (the current year by default)
+    because `statcast_batter` pulls a full season of pitches per call — every
+    pitch the batter saw from anyone — and the matchup is filtered out of that
+    locally. Statcast starts in 2015, so an earlier season returns [].
+
+    Returns [] rather than raising if the fetch fails. pybaseball is imported
+    inside the function: it pulls in pandas, and nothing in a run needs it.
+    """
+    season = season or datetime.today().year
+    if season < STATCAST_FIRST_SEASON:
+        return []
+    start = f"{season}-01-01"
+    end = min(date.today(), date(season, 12, 31)).isoformat()
+
+    try:
+        from pybaseball import statcast_batter
+
+        frame = statcast_batter(start, end, batter_id)
+    except Exception as exc:  # noqa: BLE001 - third-party call, failure modes undocumented
+        print(f"Statcast fetch failed for batter {batter_id} ({exc})")
+        return []
+
+    if frame is None or frame.empty or "pitcher" not in frame.columns:
+        return []
+
+    matchup = frame[frame["pitcher"] == pitcher_id]
+    present = [f for f in STATCAST_FIELDS if f in matchup.columns]
+    return [
+        {field: _clean(row[field]) for field in present}
+        for _, row in matchup[present].iterrows()
+    ]
 
 
 def fetch_bvp_stats(batter_id: int, pitcher_id: int) -> dict:
@@ -65,13 +131,18 @@ def attach_category_01(
     field existed — every calculator resolves to None rather than being omitted,
     so consumers can rely on the keys being present without a request having
     been made.
+
+    Costs two fetches per batter when a starter is known: one MLB Stats API
+    request for CALC_01-04, and one Statcast season pull for CALC_05-08.
     """
     season = season or datetime.today().year
-    bvp = (
-        fetch_bvp_stats(batter_id, pitcher_id)
-        if pitcher_id is not None
-        else empty_bvp()
-    )
-    results: dict[str, Rate | None] = compute_category_01(bvp, season)
+    if pitcher_id is None:
+        results: dict[str, Rate | None] = compute_category_01(empty_bvp(), season)
+    else:
+        results = compute_category_01(
+            fetch_bvp_stats(batter_id, pitcher_id),
+            season,
+            fetch_bvp_statcast(batter_id, pitcher_id, season),
+        )
     player_data.update(results)
     return player_data

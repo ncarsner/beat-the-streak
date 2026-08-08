@@ -41,9 +41,18 @@ from calculators.category_01_bvp_matchups import (
     calc_04_bvp_contact_rate,
     compute_category_01,
     parse_bvp_stats,
+    calc_05_bvp_hard_hit_rate,
+    calc_06_bvp_xba,
+    calc_06_bvp_xwoba,
+    calc_07_bvp_whiff_rate,
+    calc_08_bvp_putaway_rate,
 )
 from calculators import sources
-from calculators.sources import attach_category_01, fetch_bvp_stats
+from calculators.sources import (
+    attach_category_01,
+    fetch_bvp_stats,
+    fetch_bvp_statcast,
+)
 
 
 class FakeResponse:
@@ -1492,13 +1501,12 @@ def test_compute_category_01_returns_all_implemented_keys():
         )
     )
     results = compute_category_01(bvp, 2026)
-    assert sorted(results) == ["CALC_01", "CALC_02", "CALC_03", "CALC_04"]
     assert results["CALC_02"] == pytest.approx((2 / 6, 6))
     assert results["CALC_03"] == pytest.approx((6 / 16, 16))
 
 
 def test_compute_category_01_all_none_for_first_time_matchup():
-    results = compute_category_01({"career": None, "by_season": {}}, 2026)
+    results = compute_category_01({"career": None, "by_season": {}}, 2026, [])
     assert set(results.values()) == {None}
 
 
@@ -1668,10 +1676,11 @@ def test_attach_category_01_defaults_season_to_current_year(monkeypatch):
     monkeypatch.setattr(
         sources, "fetch_bvp_stats", lambda b, p: {"career": None, "by_season": {}}
     )
+    monkeypatch.setattr(sources, "fetch_bvp_statcast", lambda b, p, s: [])
     monkeypatch.setattr(
         sources,
         "compute_category_01",
-        lambda bvp, season: seasons.append(season) or {},
+        lambda bvp, season, pitches=None: seasons.append(season) or {},
     )
     attach_category_01({}, 592450, 543037)
     assert seasons == [datetime.today().year]
@@ -1747,3 +1756,287 @@ def test_process_game_lineup_cached_entry_predating_the_field_is_backfilled(
     process_game_lineup(g, cache, "2026-07-20", {}, all_players)
 
     assert all_players[0]["opposing_pitcher_id"] == 543037
+
+
+# ---- Category 1, Statcast-derived: CALC_05-08 ----
+
+
+def _pitch(description="ball", events=None, strikes=0, ev=None, xba=None, xwoba=None):
+    return {
+        "description": description,
+        "events": events,
+        "strikes": strikes,
+        "launch_speed": ev,
+        "estimated_ba_using_speedangle": xba,
+        "estimated_woba_using_speedangle": xwoba,
+    }
+
+
+@pytest.mark.parametrize(
+    "speeds, expected_hard, expected_total",
+    [
+        ([94.9, 95.0, 95.1], 2, 3),  # 95.0 exactly is hard hit
+        ([100.0, 101.0], 2, 2),
+        ([60.0], 0, 1),
+    ],
+)
+def test_calc_05_hard_hit_rate(speeds, expected_hard, expected_total):
+    pitches = [_pitch("hit_into_play", ev=s) for s in speeds]
+    result = calc_05_bvp_hard_hit_rate(pitches)
+    assert result == pytest.approx((expected_hard / expected_total, expected_total))
+
+
+def test_calc_05_excludes_batted_balls_without_a_reading():
+    pitches = [
+        _pitch("hit_into_play", ev=100.0),
+        _pitch("hit_into_play", ev=None),  # tracking gap, not a soft-hit ball
+    ]
+    assert calc_05_bvp_hard_hit_rate(pitches) == pytest.approx((1.0, 1))
+
+
+def test_calc_05_ignores_pitches_not_put_in_play():
+    pitches = [_pitch("foul", ev=105.0), _pitch("swinging_strike")]
+    assert calc_05_bvp_hard_hit_rate(pitches) is None
+
+
+def test_calc_05_no_batted_balls_returns_none():
+    assert calc_05_bvp_hard_hit_rate([]) is None
+
+
+def test_calc_06_xba_and_xwoba_average_the_estimates():
+    pitches = [
+        _pitch("hit_into_play", xba=0.100, xwoba=0.200),
+        _pitch("hit_into_play", xba=0.300, xwoba=0.600),
+    ]
+    assert calc_06_bvp_xba(pitches) == pytest.approx((0.200, 2))
+    assert calc_06_bvp_xwoba(pitches) == pytest.approx((0.400, 2))
+
+
+def test_calc_06_drops_batted_balls_missing_that_estimate():
+    pitches = [
+        _pitch("hit_into_play", xba=0.400, xwoba=None),
+        _pitch("hit_into_play", xba=None, xwoba=0.900),
+    ]
+    assert calc_06_bvp_xba(pitches) == pytest.approx((0.400, 1))
+    assert calc_06_bvp_xwoba(pitches) == pytest.approx((0.900, 1))
+
+
+def test_calc_06_no_contact_returns_none():
+    assert calc_06_bvp_xba([_pitch("called_strike")]) is None
+    assert calc_06_bvp_xwoba([]) is None
+
+
+@pytest.mark.parametrize(
+    "description, is_swing, is_whiff",
+    [
+        ("swinging_strike", True, True),
+        ("swinging_strike_blocked", True, True),
+        ("missed_bunt", True, True),
+        ("foul", True, False),
+        ("foul_tip", True, False),  # tipped = contact, so a swing but not a miss
+        ("foul_bunt", True, False),
+        ("bunt_foul_tip", True, False),
+        ("hit_into_play", True, False),
+        ("ball", False, False),
+        ("called_strike", False, False),
+        ("blocked_ball", False, False),
+        ("hit_by_pitch", False, False),
+    ],
+)
+def test_calc_07_classifies_each_description(description, is_swing, is_whiff):
+    """Pins the swing/whiff membership so a later revision is a visible change."""
+    result = calc_07_bvp_whiff_rate([_pitch(description)])
+    if not is_swing:
+        assert result is None
+        return
+    assert result.denominator == 1
+    assert result.rate == (1.0 if is_whiff else 0.0)
+
+
+def test_calc_07_whiff_rate_over_mixed_swings():
+    pitches = (
+        [_pitch("swinging_strike")] * 4
+        + [_pitch("foul")] * 6
+        + [_pitch("hit_into_play")] * 6
+        + [_pitch("ball")] * 9
+        + [_pitch("called_strike")]
+    )
+    assert calc_07_bvp_whiff_rate(pitches) == pytest.approx((4 / 16, 16))
+
+
+def test_calc_07_no_swings_returns_none():
+    assert calc_07_bvp_whiff_rate([_pitch("ball"), _pitch("called_strike")]) is None
+
+
+def test_calc_08_putaway_rate_over_two_strike_pitches():
+    pitches = [
+        _pitch("foul", strikes=2),
+        _pitch("ball", strikes=2),
+        _pitch("swinging_strike", events="strikeout", strikes=2),
+        _pitch("swinging_strike", strikes=1),  # not a two-strike pitch
+    ]
+    assert calc_08_bvp_putaway_rate(pitches) == pytest.approx((1 / 3, 3))
+
+
+def test_calc_08_counts_strikeout_double_play():
+    pitches = [_pitch("swinging_strike", events="strikeout_double_play", strikes=2)]
+    assert calc_08_bvp_putaway_rate(pitches) == pytest.approx((1.0, 1))
+
+
+def test_calc_08_ignores_non_strikeout_events_ending_two_strike_counts():
+    pitches = [_pitch("hit_into_play", events="single", strikes=2)]
+    assert calc_08_bvp_putaway_rate(pitches) == pytest.approx((0.0, 1))
+
+
+def test_calc_08_no_two_strike_pitches_returns_none():
+    assert calc_08_bvp_putaway_rate([_pitch("ball", strikes=1)]) is None
+
+
+def test_compute_category_01_includes_statcast_keys():
+    bvp = parse_bvp_stats(_vsplayer_payload([_split(season=2026, pa=4, ab=4, h=1)]))
+    pitches = [_pitch("hit_into_play", ev=99.0, xba=0.5, xwoba=0.6, strikes=2)]
+    results = compute_category_01(bvp, 2026, pitches)
+    assert sorted(results) == [
+        "CALC_01",
+        "CALC_02",
+        "CALC_03",
+        "CALC_04",
+        "CALC_05",
+        "CALC_06_XBA",
+        "CALC_06_XWOBA",
+        "CALC_07",
+        "CALC_08",
+    ]
+    assert results["CALC_05"] == pytest.approx((1.0, 1))
+
+
+def test_compute_category_01_without_pitches_leaves_statcast_keys_none():
+    bvp = parse_bvp_stats(_vsplayer_payload([_split(season=2026, pa=4, ab=4, h=1)]))
+    results = compute_category_01(bvp, 2026)
+    assert results["CALC_01"] is not None
+    for key in ("CALC_05", "CALC_06_XBA", "CALC_06_XWOBA", "CALC_07", "CALC_08"):
+        assert results[key] is None
+
+
+# ---- fetch_bvp_statcast ----
+
+
+def _install_fake_pybaseball(monkeypatch, frame=None, exc=None):
+    """Stub the pybaseball import inside fetch_bvp_statcast."""
+    import sys
+    import types
+
+    calls = []
+
+    def statcast_batter(start_dt, end_dt, player_id):
+        calls.append((start_dt, end_dt, player_id))
+        if exc is not None:
+            raise exc
+        return frame
+
+    module = types.ModuleType("pybaseball")
+    module.statcast_batter = statcast_batter
+    monkeypatch.setitem(sys.modules, "pybaseball", module)
+    return calls
+
+
+def _statcast_frame(rows):
+    import pandas as pd
+
+    return pd.DataFrame(rows)
+
+
+def test_fetch_bvp_statcast_filters_to_the_matchup(monkeypatch):
+    frame = _statcast_frame(
+        [
+            {"pitcher": 554430, "description": "foul", "strikes": 1, "events": None},
+            {"pitcher": 999999, "description": "ball", "strikes": 0, "events": None},
+        ]
+    )
+    _install_fake_pybaseball(monkeypatch, frame=frame)
+    result = fetch_bvp_statcast(518692, 554430, season=2026)
+    assert len(result) == 1
+    assert result[0]["description"] == "foul"
+
+
+def test_fetch_bvp_statcast_converts_nan_to_none(monkeypatch):
+    frame = _statcast_frame(
+        [
+            {
+                "pitcher": 554430,
+                "description": "hit_into_play",
+                "strikes": 0,
+                "events": "single",
+                "launch_speed": float("nan"),
+                "estimated_ba_using_speedangle": 0.4,
+            }
+        ]
+    )
+    _install_fake_pybaseball(monkeypatch, frame=frame)
+    record = fetch_bvp_statcast(518692, 554430, season=2026)[0]
+    assert record["launch_speed"] is None
+    assert record["estimated_ba_using_speedangle"] == pytest.approx(0.4)
+
+
+def test_fetch_bvp_statcast_requests_the_requested_season(monkeypatch):
+    calls = _install_fake_pybaseball(monkeypatch, frame=_statcast_frame([]))
+    fetch_bvp_statcast(518692, 554430, season=2019)
+    start, end, player_id = calls[0]
+    assert start == "2019-01-01"
+    assert end == "2019-12-31"
+    assert player_id == 518692
+
+
+def test_fetch_bvp_statcast_caps_the_end_date_at_today(monkeypatch):
+    from datetime import date
+
+    calls = _install_fake_pybaseball(monkeypatch, frame=_statcast_frame([]))
+    fetch_bvp_statcast(518692, 554430, season=date.today().year)
+    assert calls[0][1] == date.today().isoformat()
+
+
+def test_fetch_bvp_statcast_before_statcast_existed_returns_empty(monkeypatch):
+    calls = _install_fake_pybaseball(monkeypatch, frame=_statcast_frame([]))
+    assert fetch_bvp_statcast(518692, 554430, season=2014) == []
+    assert calls == []  # no pointless request
+
+
+def test_fetch_bvp_statcast_fetch_failure_returns_empty(monkeypatch, capsys):
+    _install_fake_pybaseball(monkeypatch, exc=RuntimeError("savant down"))
+    assert fetch_bvp_statcast(518692, 554430, season=2026) == []
+    assert "Statcast fetch failed" in capsys.readouterr().out
+
+
+def test_fetch_bvp_statcast_empty_frame_returns_empty(monkeypatch):
+    _install_fake_pybaseball(monkeypatch, frame=_statcast_frame([]))
+    assert fetch_bvp_statcast(518692, 554430, season=2026) == []
+
+
+def test_fetch_bvp_statcast_frame_without_pitcher_column_returns_empty(monkeypatch):
+    _install_fake_pybaseball(
+        monkeypatch, frame=_statcast_frame([{"description": "ball"}])
+    )
+    assert fetch_bvp_statcast(518692, 554430, season=2026) == []
+
+
+def test_attach_category_01_pulls_statcast_when_a_starter_is_known(monkeypatch):
+    monkeypatch.setattr(sources, "fetch_bvp_stats", lambda b, p: sources.empty_bvp())
+    seen = []
+    monkeypatch.setattr(
+        sources,
+        "fetch_bvp_statcast",
+        lambda b, p, s: seen.append((b, p, s)) or [_pitch("swinging_strike")],
+    )
+    data = {}
+    attach_category_01(data, 518692, 554430, season=2026)
+    assert seen == [(518692, 554430, 2026)]
+    assert data["CALC_07"] == pytest.approx((1.0, 1))
+
+
+def test_attach_category_01_skips_statcast_without_a_starter(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sources, "fetch_bvp_statcast", lambda *a: calls.append(a) or [])
+    data = {}
+    attach_category_01(data, 518692, None, season=2026)
+    assert calls == []
+    assert data["CALC_05"] is None

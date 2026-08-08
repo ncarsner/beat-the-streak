@@ -16,9 +16,10 @@ Layout and naming, applied to every category as it lands:
   calculator modules never import it, so the arithmetic stays testable without
   mocking.
 
-Implemented so far: category 1 (batter vs. pitcher). Nothing in this package is
-called during a run yet — the calculators are being validated individually and
-will be consumed together by the composite model (`CALC_75`).
+Implemented so far: category 1 (batter vs. pitcher), `CALC_01`-`CALC_08`.
+Nothing in this package is called during a run yet — the calculators are being
+validated individually and will be consumed together by the composite model
+(`CALC_75`).
 
 Only the cross-category surface is re-exported here. Calculators themselves are
 imported from the module that owns them —

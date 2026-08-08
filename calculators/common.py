@@ -38,11 +38,12 @@ def aggregate_lines(lines: Iterable[dict[str, Any]]) -> dict[str, int]:
     return total
 
 
-def rate_or_none(numerator: int, denominator: int) -> Rate | None:
+def rate_or_none(numerator: float, denominator: int) -> Rate | None:
     """Return a `Rate`, or ``None`` when there is nothing to divide by.
 
     An empty sample is absence of evidence, not a 0.0 rate, and callers have to
-    be able to tell the two apart.
+    be able to tell the two apart. *numerator* is a float because some
+    calculators average per-event estimates rather than counting occurrences.
     """
     if denominator <= 0:
         return None

@@ -10,12 +10,18 @@ The payload is produced by `parse_bvp_stats` and has the shape::
 
 where a *line* is a dict of `calculators.common.COUNTING_STATS`.
 
-`CALC_05`-`CALC_08` (hard-hit %, xBA/xwOBA, whiff rate, putaway rate) are not
-implemented: they require Statcast pitch-level data, which the MLB Stats API
-does not expose per batter-pitcher pair.
+`CALC_05`-`CALC_08` work from Statcast pitch-level data instead, supplied by
+`calculators.sources.fetch_bvp_statcast` as a list of normalized pitch records —
+one dict per pitch the batter saw from that pitcher, with `None` (never NaN) for
+absent readings. Statcast only goes back to 2015 and a fetch pulls one season at
+a time, so these are season-scoped, unlike `CALC_01`'s true career window. The
+scope is a parameter on the fetch, not a constant here.
+
+`CALC_06` is the one ROADMAP consideration carrying two outputs (xBA and xwOBA);
+it is emitted under two keys, `CALC_06_XBA` and `CALC_06_XWOBA`.
 """
 
-from typing import Any
+from typing import Any, Sequence
 
 from calculators.common import (
     COUNTING_STATS,
@@ -27,6 +33,42 @@ from calculators.common import (
 
 # CALC_03's window: the current season plus the two prior calendar years.
 RECENT_WINDOW_YEARS = 3
+
+# Statcast `description` value for a pitch the batter put into play.
+IN_PLAY = "hit_into_play"
+
+# Statcast `description` values that mean the batter swung. Anything the bat
+# made contact with counts, fouls included — the denominator of CALC_07 is
+# "total swings", not "swings that could have been hits".
+SWING_DESCRIPTIONS = frozenset(
+    {
+        "swinging_strike",
+        "swinging_strike_blocked",
+        "foul",
+        "foul_tip",
+        "foul_bunt",
+        "bunt_foul_tip",
+        "missed_bunt",
+        IN_PLAY,
+    }
+)
+
+# Swings where the bat missed the ball entirely. `foul_tip` and `foul_bunt` are
+# deliberately excluded: ROADMAP defines CALC_07 as "swings and misses", and a
+# tipped ball is contact even though it is scored a strike.
+WHIFF_DESCRIPTIONS = frozenset(
+    {
+        "swinging_strike",
+        "swinging_strike_blocked",
+        "missed_bunt",
+    }
+)
+
+# Statcast `events` values that end the plate appearance in a strikeout.
+STRIKEOUT_EVENTS = frozenset({"strikeout", "strikeout_double_play"})
+
+# Exit velocity at or above which a batted ball is "hard hit", per Statcast.
+HARD_HIT_MPH = 95.0
 
 
 def parse_bvp_stats(payload: dict[str, Any]) -> dict[str, Any]:
@@ -125,11 +167,90 @@ def calc_04_bvp_contact_rate(
     return rate_or_none(pa - line["strikeOuts"] - line["baseOnBalls"], pa)
 
 
-def compute_category_01(bvp: dict[str, Any], season: int) -> dict[str, Rate | None]:
-    """Run every implemented Category 1 calculator over *bvp*."""
+def _batted_balls(pitches: Sequence[dict[str, Any]], field: str) -> list[float]:
+    """Return *field* for every batted ball that carries a reading for it.
+
+    Statcast leaves exit velocity and the expected-stat estimates unset on some
+    batted balls, and a missing reading is not a zero — it has to leave the
+    denominator rather than drag the average down.
+    """
+    values = []
+    for pitch in pitches:
+        if pitch.get("description") != IN_PLAY:
+            continue
+        value = pitch.get(field)
+        if value is not None:
+            values.append(float(value))
+    return values
+
+
+def calc_05_bvp_hard_hit_rate(pitches: Sequence[dict[str, Any]]) -> Rate | None:
+    """CALC_05 — share of batted balls hit at or above 95 mph exit velocity."""
+    speeds = _batted_balls(pitches, "launch_speed")
+    hard = sum(1 for speed in speeds if speed >= HARD_HIT_MPH)
+    return rate_or_none(hard, len(speeds))
+
+
+def calc_06_bvp_xba(pitches: Sequence[dict[str, Any]]) -> Rate | None:
+    """CALC_06 (xBA) — mean expected batting average on contact.
+
+    The `rate` is an average of per-batted-ball estimates rather than a ratio of
+    counts, but it is still a value over a sample size, so it carries the same
+    `Rate` shape as everything else.
+    """
+    values = _batted_balls(pitches, "estimated_ba_using_speedangle")
+    return rate_or_none(sum(values), len(values))
+
+
+def calc_06_bvp_xwoba(pitches: Sequence[dict[str, Any]]) -> Rate | None:
+    """CALC_06 (xwOBA) — mean expected weighted on-base average on contact."""
+    values = _batted_balls(pitches, "estimated_woba_using_speedangle")
+    return rate_or_none(sum(values), len(values))
+
+
+def calc_07_bvp_whiff_rate(pitches: Sequence[dict[str, Any]]) -> Rate | None:
+    """CALC_07 — swings and misses / total swings.
+
+    Swing and whiff classification is by Statcast `description`; see
+    `SWING_DESCRIPTIONS` and `WHIFF_DESCRIPTIONS` for the exact membership.
+    """
+    swings = [p for p in pitches if p.get("description") in SWING_DESCRIPTIONS]
+    whiffs = sum(1 for p in swings if p["description"] in WHIFF_DESCRIPTIONS)
+    return rate_or_none(whiffs, len(swings))
+
+
+def calc_08_bvp_putaway_rate(pitches: Sequence[dict[str, Any]]) -> Rate | None:
+    """CALC_08 — strikeouts / pitches thrown in two-strike counts.
+
+    The denominator is two-strike *pitches*, not two-strike plate appearances:
+    a batter who fouls off six pitches before striking out survived six chances
+    to be put away, and the rate should reflect that.
+    """
+    two_strike = [p for p in pitches if p.get("strikes") == 2]
+    putaways = sum(1 for p in two_strike if p.get("events") in STRIKEOUT_EVENTS)
+    return rate_or_none(putaways, len(two_strike))
+
+
+def compute_category_01(
+    bvp: dict[str, Any],
+    season: int,
+    pitches: Sequence[dict[str, Any]] | None = None,
+) -> dict[str, Rate | None]:
+    """Run every implemented Category 1 calculator.
+
+    *bvp* feeds CALC_01-04. *pitches* feeds the Statcast-derived CALC_05-08; pass
+    ``None`` when no Statcast data was fetched and those keys resolve to ``None``
+    rather than being omitted.
+    """
+    pitches = pitches or []
     return {
         "CALC_01": calc_01_bvp_career_hit_rate(bvp),
         "CALC_02": calc_02_bvp_season_hit_rate(bvp, season),
         "CALC_03": calc_03_bvp_recent_window_hit_rate(bvp, season),
         "CALC_04": calc_04_bvp_contact_rate(bvp),
+        "CALC_05": calc_05_bvp_hard_hit_rate(pitches),
+        "CALC_06_XBA": calc_06_bvp_xba(pitches),
+        "CALC_06_XWOBA": calc_06_bvp_xwoba(pitches),
+        "CALC_07": calc_07_bvp_whiff_rate(pitches),
+        "CALC_08": calc_08_bvp_putaway_rate(pitches),
     }

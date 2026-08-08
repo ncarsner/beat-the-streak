@@ -33,6 +33,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   one `vsPlayer` request per batter covers all four calculators. A batter with no announced
   opposing starter gets all-`None` calculator keys without a request being made. **Neither is
   called during a run yet** — see Notes.
+- `CALC_05`-`CALC_08`, the Statcast half of Category 1: `calc_05_bvp_hard_hit_rate`,
+  `calc_06_bvp_xba` / `calc_06_bvp_xwoba`, `calc_07_bvp_whiff_rate`, and
+  `calc_08_bvp_putaway_rate`. Pure functions over a list of normalized pitch records; swing and
+  whiff membership is pinned by an explicit `description`-by-`description` test, and a tipped
+  ball counts as a swing but not a miss per ROADMAP's "swings and misses" wording. `CALC_06`
+  carries two metrics and is emitted under `CALC_06_XBA` and `CALC_06_XWOBA`.
+- `fetch_bvp_statcast` in `calculators/sources.py`: pulls a season of Statcast pitches for a
+  batter via pybaseball, filters to the opposing starter, and normalizes to plain dicts with
+  `None` in place of NaN, so no DataFrame crosses into the calculators. Season-scoped, since
+  Statcast starts in 2015 and a call pulls one season — a different span than `CALC_01`'s
+  career window. Returns `[]` on failure rather than raising.
+- **pybaseball 2.0.0** added to `requirements.txt`, authorized by the repo owner on 2026-08-07
+  and recorded in `AGENTS/authorized_libraries.md` (created in the same change; RULES §5 had
+  been pointing at a list this project never created). Imported lazily inside the fetch
+  function, never at module scope, so neither the daily run nor most of the test suite pays for
+  pandas. `.github/workflows/sms-notify.yml` installs `requests` only and does not read
+  `requirements.txt`, so the cron is unaffected.
 - `mlb_api.py`: single home for `MLB_API_BASE`, now that both the run path and the calculator
   fetch layer hit the same host. Previously defined in `main.py` only.
 - `probable_pitcher_id` and `hydrate=probablePitcher` on the `/schedule` request: `fetch_schedule`
@@ -60,8 +77,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `fetch_schedule`'s `probablePitcher` hydration and the per-batter `opposing_pitcher_id` *are*
   live, since both are free — the hydration rides an existing request and the resolution is
   local. They are the inputs `fetch_bvp_stats` will need.
-- `CALC_05`-`CALC_08` (BvP hard-hit %, xBA/xwOBA, whiff rate, putaway rate) are not implemented:
-  they need Statcast pitch-level data the MLB Stats API does not expose per batter-pitcher pair.
 
 ---
 

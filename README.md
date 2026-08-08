@@ -167,6 +167,10 @@ total:
 | `CALC_02` | BvP Season Hit Rate | H / PA head-to-head in the current season |
 | `CALC_03` | BvP Recent Window Hit Rate | H / PA head-to-head over the last 3 calendar years |
 | `CALC_04` | BvP Contact Rate | (PA − SO − BB) / PA head-to-head |
+| `CALC_05` | BvP Hard Hit % | batted balls ≥ 95 mph exit velocity / batted balls |
+| `CALC_06` | BvP xBA / xwOBA | mean expected BA and wOBA on contact (two keys) |
+| `CALC_07` | BvP Whiff Rate | swings and misses / total swings |
+| `CALC_08` | BvP Putaway Rate | strikeouts / pitches in two-strike counts |
 
 Each returns a `Rate` — the value paired with the sample size behind it — or `None` when the
 pair has never faced each other, when no starter has been announced, or when the game begins
@@ -184,9 +188,24 @@ Supporting groundwork *is* live, since it costs no extra requests: `fetch_schedu
 `probablePitcher`, and each lineup entry carries the `opposing_pitcher_id` of the other side's
 announced starter.
 
-`CALC_05`–`CALC_08` (hard-hit %, xBA/xwOBA, whiff rate, putaway rate) require Statcast
-pitch-level data that the MLB Stats API does not expose per batter-pitcher pair, and are not
-implemented.
+`CALC_01`–`CALC_04` come from the MLB Stats API. `CALC_05`–`CALC_08` need Statcast pitch-level
+data, which that API does not expose per batter-pitcher pair, so they come from Baseball Savant
+via **pybaseball** (`fetch_bvp_statcast`). Two consequences worth knowing:
+
+- **They are season-scoped, not career-scoped.** Statcast starts in 2015 and `statcast_batter`
+  pulls one season per call, so `CALC_05`–`CALC_08` describe a different span of time than
+  `CALC_01`'s true career window. The season is a parameter on the fetch.
+- **`CALC_06` is emitted under two keys**, `CALC_06_XBA` and `CALC_06_XWOBA` — the one ROADMAP
+  consideration carrying two metrics.
+
+Swing and whiff classification for `CALC_07` is by Statcast `description`, listed exactly in
+`SWING_DESCRIPTIONS` / `WHIFF_DESCRIPTIONS`. A tipped ball counts as a swing but not a miss,
+since ROADMAP defines the calculator as "swings and misses".
+
+pybaseball is imported lazily inside the fetch function, never at module scope: it pulls in
+pandas and a large transitive tree, and neither the daily run nor most of the test suite needs
+it. The scheduled workflow installs `requests` only and does not read `requirements.txt`, so
+the cron is unaffected.
 
 The API's two groups are independently unreliable, so career totals are summed from the
 per-season splits and the API's own `vsPlayerTotal` line is used only as a fallback. Both
