@@ -31,6 +31,16 @@ from main import (
     build_arg_parser,
     DEFAULT_COOLDOWN_DAYS,
 )
+from calculators import (
+    aggregate_lines,
+    empty_line,
+    parse_bvp_stats,
+    calc_01_bvp_career_hit_rate,
+    calc_02_bvp_season_hit_rate,
+    calc_03_bvp_recent_window_hit_rate,
+    calc_04_bvp_contact_rate,
+    compute_bvp_calculators,
+)
 
 
 class FakeResponse:
@@ -690,7 +700,10 @@ def test_load_queried_games_cache_corrupt_file_returns_empty_dict(tmp_path):
 def test_save_and_load_queried_games_cache_roundtrip(tmp_path):
     cache_file = tmp_path / "queried_games_cache.json"
     cache = {
-        "700001": {"date": "2026-07-20", "players": [{"id": 1, "fullName": "A", "team_id": 119}]},
+        "700001": {
+            "date": "2026-07-20",
+            "players": [{"id": 1, "fullName": "A", "team_id": 119}],
+        },
         "700002": {"date": "2026-07-20", "players": []},
     }
     save_queried_games_cache(cache, cache_file)
@@ -757,7 +770,9 @@ def test_process_game_lineup_not_posted_does_not_mark_queried(monkeypatch):
     assert all_players == []
 
 
-def test_process_game_lineup_already_queried_today_skips_fetch_but_reuses_players(monkeypatch):
+def test_process_game_lineup_already_queried_today_skips_fetch_but_reuses_players(
+    monkeypatch,
+):
     fetch_calls = []
 
     def fake_fetch(pk):
@@ -785,13 +800,17 @@ def test_process_game_lineup_prior_day_entry_does_not_block(monkeypatch):
     monkeypatch.setattr(main, "fetch_lineup", lambda pk: {"home": home, "away": away})
 
     stale_players = [{"id": 999, "fullName": "Stale Player", "team_id": 119}]
-    cache = {"700001": {"date": "2026-07-19", "players": stale_players}}  # stale — yesterday
+    cache = {
+        "700001": {"date": "2026-07-19", "players": stale_players}
+    }  # stale — yesterday
     schedule_map, all_players = {}, []
     g = _make_schedule_game()
     result = process_game_lineup(g, cache, "2026-07-20", schedule_map, all_players)
 
     assert result is True
-    assert cache == {"700001": {"date": "2026-07-20", "players": home + away}}  # overwritten with today
+    assert cache == {
+        "700001": {"date": "2026-07-20", "players": home + away}
+    }  # overwritten with today
     assert all_players == home + away  # fresh fetch, not the stale cached players
 
 
@@ -1205,3 +1224,227 @@ def test_run_scheduled_mode_sends_sms_for_each_grouping(monkeypatch):
     monkeypatch.setenv("SUBSCRIBER_PHONE_NUMBER", "+10005552222")
     main.run(_fake_args(scheduled=True))
     assert sorted(sms_calls) == [18, 19]
+
+
+# ---- Category 1: BvP calculators (calculators.py) ----
+
+
+def _split(season=None, pa=0, ab=0, h=0, so=0, bb=0):
+    stat = {
+        "plateAppearances": pa,
+        "atBats": ab,
+        "hits": h,
+        "strikeOuts": so,
+        "baseOnBalls": bb,
+    }
+    return {"season": season, "stat": stat}
+
+
+def _vsplayer_payload(season_splits, total=None):
+    """Build a raw stats=vsPlayer response with optional vsPlayerTotal group."""
+    stats = [{"type": {"displayName": "vsPlayer"}, "splits": season_splits}]
+    if total is not None:
+        stats.append({"type": {"displayName": "vsPlayerTotal"}, "splits": [total]})
+    return {"stats": stats}
+
+
+def test_parse_bvp_stats_splits_seasons_and_career():
+    payload = _vsplayer_payload(
+        [
+            _split(season=2024, pa=10, ab=9, h=3, so=2, bb=1),
+            _split(season=2026, pa=6, ab=6, h=2, so=0, bb=0),
+        ],
+        total=_split(pa=16, ab=15, h=5, so=2, bb=1),
+    )
+    bvp = parse_bvp_stats(payload)
+    assert bvp["career"]["plateAppearances"] == 16
+    assert sorted(bvp["by_season"]) == [2024, 2026]
+    assert bvp["by_season"][2026]["hits"] == 2
+
+
+def test_parse_bvp_stats_season_as_string_is_coerced_to_int():
+    payload = _vsplayer_payload([_split(season="2026", pa=4, ab=4, h=1)])
+    assert 2026 in parse_bvp_stats(payload)["by_season"]
+
+
+def test_parse_bvp_stats_derives_career_when_total_group_absent():
+    payload = _vsplayer_payload(
+        [
+            _split(season=2025, pa=5, ab=5, h=2, so=1, bb=0),
+            _split(season=2026, pa=3, ab=2, h=1, so=0, bb=1),
+        ]
+    )
+    career = parse_bvp_stats(payload)["career"]
+    assert career == {
+        "plateAppearances": 8,
+        "atBats": 7,
+        "hits": 3,
+        "strikeOuts": 1,
+        "baseOnBalls": 1,
+    }
+
+
+def test_parse_bvp_stats_repeated_total_group_is_harmless():
+    payload = _vsplayer_payload(
+        [_split(season=2026, pa=4, ab=4, h=1)], total=_split(pa=4, ab=4, h=1)
+    )
+    payload["stats"].append(
+        {"type": {"displayName": "vsPlayerTotal"}, "splits": [_split(pa=4, ab=4, h=1)]}
+    )
+    assert parse_bvp_stats(payload)["career"]["plateAppearances"] == 4
+
+
+def test_parse_bvp_stats_skips_season_split_without_season():
+    payload = _vsplayer_payload([_split(season=None, pa=9, ab=8, h=4)])
+    bvp = parse_bvp_stats(payload)
+    assert bvp["by_season"] == {}
+    assert bvp["career"] is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"stats": []}, {"stats": None}, {"stats": [{"type": {}, "splits": []}]}],
+)
+def test_parse_bvp_stats_empty_payloads(payload):
+    assert parse_bvp_stats(payload) == {"career": None, "by_season": {}}
+
+
+def test_aggregate_lines_tolerates_missing_and_null_fields():
+    assert aggregate_lines([{"hits": 2}, {"hits": None, "atBats": 3}]) == {
+        "plateAppearances": 0,
+        "atBats": 3,
+        "hits": 2,
+        "strikeOuts": 0,
+        "baseOnBalls": 0,
+    }
+
+
+def test_calc_01_career_hit_rate():
+    bvp = parse_bvp_stats(
+        _vsplayer_payload(
+            [_split(season=2026, pa=6, ab=6, h=2)],
+            total=_split(pa=76, ab=60, h=23, so=12, bb=15),
+        )
+    )
+    result = calc_01_bvp_career_hit_rate(bvp)
+    assert result == pytest.approx((23 / 76, 76))
+    assert result.denominator == 76
+
+
+def test_calc_01_returns_none_without_career_history():
+    assert calc_01_bvp_career_hit_rate({"career": None, "by_season": {}}) is None
+
+
+def test_calc_01_returns_none_on_zero_plate_appearances():
+    bvp = {"career": empty_line(), "by_season": {}}
+    assert calc_01_bvp_career_hit_rate(bvp) is None
+
+
+def test_calc_02_season_hit_rate_isolates_the_requested_season():
+    bvp = parse_bvp_stats(
+        _vsplayer_payload(
+            [
+                _split(season=2025, pa=10, ab=10, h=5),
+                _split(season=2026, pa=6, ab=6, h=2),
+            ]
+        )
+    )
+    assert calc_02_bvp_season_hit_rate(bvp, 2026) == pytest.approx((2 / 6, 6))
+    assert calc_02_bvp_season_hit_rate(bvp, 2025) == pytest.approx((5 / 10, 10))
+
+
+def test_calc_02_returns_none_for_unfaced_season():
+    bvp = parse_bvp_stats(_vsplayer_payload([_split(season=2024, pa=4, ab=4, h=1)]))
+    assert calc_02_bvp_season_hit_rate(bvp, 2026) is None
+
+
+@pytest.mark.parametrize(
+    "years, expected_pa, expected_hits",
+    [(1, 6, 2), (3, 21, 8), (5, 30, 11)],
+)
+def test_calc_03_recent_window_sums_only_seasons_inside_window(
+    years, expected_pa, expected_hits
+):
+    bvp = parse_bvp_stats(
+        _vsplayer_payload(
+            [
+                _split(season=2022, pa=9, ab=9, h=3),
+                _split(season=2024, pa=5, ab=5, h=2),
+                _split(season=2025, pa=10, ab=10, h=4),
+                _split(season=2026, pa=6, ab=6, h=2),
+            ]
+        )
+    )
+    result = calc_03_bvp_recent_window_hit_rate(bvp, 2026, years=years)
+    assert result == pytest.approx((expected_hits / expected_pa, expected_pa))
+
+
+def test_calc_03_defaults_to_three_year_window():
+    bvp = parse_bvp_stats(
+        _vsplayer_payload(
+            [
+                _split(season=2023, pa=100, ab=100, h=50),
+                _split(season=2025, pa=4, ab=4, h=1),
+            ]
+        )
+    )
+    assert calc_03_bvp_recent_window_hit_rate(bvp, 2026) == pytest.approx((1 / 4, 4))
+
+
+def test_calc_03_ignores_seasons_after_the_reference_season():
+    bvp = parse_bvp_stats(_vsplayer_payload([_split(season=2026, pa=6, ab=6, h=3)]))
+    assert calc_03_bvp_recent_window_hit_rate(bvp, 2024) is None
+
+
+def test_calc_03_returns_none_when_window_is_empty():
+    bvp = parse_bvp_stats(_vsplayer_payload([_split(season=2019, pa=8, ab=8, h=4)]))
+    assert calc_03_bvp_recent_window_hit_rate(bvp, 2026) is None
+
+
+def test_calc_04_contact_rate_excludes_strikeouts_and_walks():
+    bvp = parse_bvp_stats(
+        _vsplayer_payload(
+            [_split(season=2026, pa=6, ab=6, h=2)],
+            total=_split(pa=76, ab=60, h=23, so=12, bb=15),
+        )
+    )
+    assert calc_04_bvp_contact_rate(bvp) == pytest.approx(((76 - 12 - 15) / 76, 76))
+
+
+def test_calc_04_scoped_to_a_single_season():
+    bvp = parse_bvp_stats(
+        _vsplayer_payload([_split(season=2026, pa=10, ab=8, h=3, so=1, bb=2)])
+    )
+    assert calc_04_bvp_contact_rate(bvp, season=2026) == pytest.approx((7 / 10, 10))
+    assert calc_04_bvp_contact_rate(bvp, season=2025) is None
+
+
+def test_calc_04_all_outcomes_are_strikeouts_or_walks():
+    bvp = parse_bvp_stats(
+        _vsplayer_payload([_split(season=2026, pa=4, ab=2, h=0, so=2, bb=2)])
+    )
+    assert calc_04_bvp_contact_rate(bvp) == pytest.approx((0.0, 4))
+
+
+def test_calc_04_returns_none_without_history():
+    assert calc_04_bvp_contact_rate({"career": None, "by_season": {}}) is None
+
+
+def test_compute_bvp_calculators_returns_all_implemented_keys():
+    bvp = parse_bvp_stats(
+        _vsplayer_payload(
+            [
+                _split(season=2025, pa=10, ab=10, h=4, so=2, bb=0),
+                _split(season=2026, pa=6, ab=6, h=2, so=1, bb=0),
+            ]
+        )
+    )
+    results = compute_bvp_calculators(bvp, 2026)
+    assert sorted(results) == ["CALC_01", "CALC_02", "CALC_03", "CALC_04"]
+    assert results["CALC_02"] == pytest.approx((2 / 6, 6))
+    assert results["CALC_03"] == pytest.approx((6 / 16, 16))
+
+
+def test_compute_bvp_calculators_all_none_for_first_time_matchup():
+    results = compute_bvp_calculators({"career": None, "by_season": {}}, 2026)
+    assert set(results.values()) == {None}
