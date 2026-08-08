@@ -6,8 +6,14 @@ from calculators import aggregate_lines, apply_window, rate_or_none
 from calculators.common import (
     CAREER,
     DAYS,
+    DELTA,
+    EXPONENT,
     GAMES,
+    MULTIPLIER,
     PLATE_APPEARANCES,
+    PROBABILITY,
+    Rate,
+    Role,
     SEASON,
     SEASONS,
     Window,
@@ -263,6 +269,90 @@ class TestSeasonWindow:
 
     def test_season_empty_records_returns_none(self):
         assert apply_window([], SEASON(), today=TODAY) is None
+
+
+# ---- Role types ----
+
+
+class TestRoleTypes:
+    """Role-tagged calculator returns: PROBABILITY, MULTIPLIER, EXPONENT, DELTA."""
+
+    def test_probability_carries_rate(self):
+        r = PROBABILITY(Rate(0.3, 5))
+        assert r.value.rate == pytest.approx(0.3)
+        assert r.value.denominator == 5
+
+    def test_multiplier_carries_rate(self):
+        r = MULTIPLIER(Rate(1.2, 10))
+        assert r.value.rate == pytest.approx(1.2)
+        assert r.value.denominator == 10
+
+    def test_exponent_carries_rate(self):
+        r = EXPONENT(Rate(4.1, 9))
+        assert r.value.rate == pytest.approx(4.1)
+        assert r.value.denominator == 9
+
+    def test_delta_carries_rate(self):
+        # DELTA may be negative — not clamped to [0, 1].
+        r = DELTA(Rate(-0.05, 20))
+        assert r.value.rate == pytest.approx(-0.05)
+        assert r.value.denominator == 20
+
+    @pytest.mark.parametrize(
+        "role_value, expected_type",
+        [
+            (PROBABILITY(Rate(0.3, 5)), PROBABILITY),
+            (MULTIPLIER(Rate(1.2, 10)), MULTIPLIER),
+            (EXPONENT(Rate(4.1, 9)), EXPONENT),
+            (DELTA(Rate(-0.05, 20)), DELTA),
+        ],
+    )
+    def test_roles_are_distinguishable_by_isinstance(
+        self, role_value: Role, expected_type: type
+    ) -> None:
+        """Each role kind is uniquely identifiable by isinstance, no lookup table needed."""
+        assert isinstance(role_value, expected_type)
+        all_types = [PROBABILITY, MULTIPLIER, EXPONENT, DELTA]
+        for t in all_types:
+            if t is expected_type:
+                continue
+            assert not isinstance(role_value, t)
+
+    def test_consumer_can_branch_on_role(self) -> None:
+        """A consumer dispatches on role via isinstance without a per-calculator lookup."""
+        roles: list[Role] = [
+            PROBABILITY(Rate(0.3, 5)),
+            MULTIPLIER(Rate(1.1, 30)),
+            EXPONENT(Rate(4.2, 9)),
+            DELTA(Rate(-0.02, 15)),
+        ]
+        seen = []
+        for role in roles:
+            if isinstance(role, PROBABILITY):
+                seen.append("prob")
+            elif isinstance(role, MULTIPLIER):
+                seen.append("mult")
+            elif isinstance(role, EXPONENT):
+                seen.append("exp")
+            elif isinstance(role, DELTA):
+                seen.append("delta")
+        assert seen == ["prob", "mult", "exp", "delta"]
+
+    def test_none_propagates_as_absent_sample(self) -> None:
+        """rate_or_none returns None for zero denominator; callers wrap only non-None."""
+        raw = rate_or_none(0.0, 0)  # no sample
+        assert raw is None
+        # The caller contract: PROBABILITY | None
+        result: PROBABILITY | None = PROBABILITY(raw) if raw is not None else None
+        assert result is None
+
+    def test_sample_size_survives_role_wrapper(self) -> None:
+        """The denominator is accessible through the role wrapper's .value field."""
+        raw = rate_or_none(3, 10)
+        assert raw is not None
+        tagged = PROBABILITY(raw)
+        assert tagged.value.denominator == 10
+        assert tagged.value.rate == pytest.approx(0.3)
 
 
 # ---- Window type discrimination ----

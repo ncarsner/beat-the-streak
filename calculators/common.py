@@ -238,3 +238,57 @@ def apply_window(
         result = list(records)
 
     return result if result else None
+
+
+# ---------------------------------------------------------------------------
+# Role — the semantic meaning of a calculator's returned value
+# ---------------------------------------------------------------------------
+# Each variant is a public frozen dataclass wrapping a Rate, so consumers
+# dispatch cleanly via isinstance and the constructor documents intent:
+#
+#   return PROBABILITY(rate_or_none(hits, pa))
+#
+# The four roles map onto the composite model (CALC_75):
+#   PROBABILITY  → blends directly into p_hit (a batting-average-style rate)
+#   MULTIPLIER   → scales p_hit; must not be read as a probability
+#   EXPONENT     → feeds PA_proj (e.g. lineup-spot PA expectation)
+#   DELTA        → signed rate adjustment; may be negative, not clamped to [0, 1]
+#
+# The caller contract is ``PROBABILITY | None`` — ``None`` when there is no
+# sample, a role-tagged Rate when there is. ``rate_or_none`` is unchanged;
+# callers compose it:
+#
+#   value = rate_or_none(hits, pa)
+#   return PROBABILITY(value) if value is not None else None
+
+
+@dataclass(frozen=True)
+class PROBABILITY:
+    """A batting-average style rate that blends into p_hit."""
+
+    value: Rate
+
+
+@dataclass(frozen=True)
+class MULTIPLIER:
+    """A scaling factor applied to p_hit; must not be read as a probability."""
+
+    value: Rate
+
+
+@dataclass(frozen=True)
+class EXPONENT:
+    """A projected plate-appearance count that feeds PA_proj, not p_hit."""
+
+    value: Rate
+
+
+@dataclass(frozen=True)
+class DELTA:
+    """A signed rate adjustment that may be negative and is not clamped to [0, 1]."""
+
+    value: Rate
+
+
+# Union type for annotations — all four role kinds.
+Role = PROBABILITY | MULTIPLIER | EXPONENT | DELTA
