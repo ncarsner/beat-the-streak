@@ -29,9 +29,15 @@ from main import (
     send_sms_notification,
     dispatch_scheduled_sms,
     build_arg_parser,
+    probable_pitcher_id,
+    fetch_bvp_stats,
+    attach_bvp_calculators,
+    format_bvp,
+    build_table_row,
     DEFAULT_COOLDOWN_DAYS,
 )
 from calculators import (
+    BvPRate,
     aggregate_lines,
     empty_line,
     parse_bvp_stats,
@@ -730,7 +736,14 @@ def test_is_game_queried_today_stale_prior_day_returns_false():
 # ---- process_game_lineup ----
 
 
-def _make_schedule_game(game_pk=700001, home_team_id=119, away_team_id=137, hour=19):
+def _make_schedule_game(
+    game_pk=700001,
+    home_team_id=119,
+    away_team_id=137,
+    hour=19,
+    home_pitcher_id=543037,
+    away_pitcher_id=554430,
+):
     from datetime import timezone
 
     return {
@@ -739,7 +752,13 @@ def _make_schedule_game(game_pk=700001, home_team_id=119, away_team_id=137, hour
         "home_team_id": home_team_id,
         "away_team_id": away_team_id,
         "start_dt": datetime(2026, 7, 20, hour, 0, 0, tzinfo=timezone.utc),
+        "home_pitcher_id": home_pitcher_id,
+        "away_pitcher_id": away_pitcher_id,
     }
+
+
+def _with_opponent(players, pitcher_id):
+    return [{**p, "opposing_pitcher_id": pitcher_id} for p in players]
 
 
 def test_process_game_lineup_posted_marks_queried_and_adds_players(monkeypatch):
@@ -751,9 +770,10 @@ def test_process_game_lineup_posted_marks_queried_and_adds_players(monkeypatch):
     g = _make_schedule_game()
     result = process_game_lineup(g, cache, "2026-07-20", schedule_map, all_players)
 
+    expected = _with_opponent(home, 554430) + _with_opponent(away, 543037)
     assert result is True
-    assert cache == {"700001": {"date": "2026-07-20", "players": home + away}}
-    assert all_players == home + away
+    assert cache == {"700001": {"date": "2026-07-20", "players": expected}}
+    assert all_players == expected
     assert schedule_map[119] == 19
     assert schedule_map[137] == 19
 
@@ -807,11 +827,12 @@ def test_process_game_lineup_prior_day_entry_does_not_block(monkeypatch):
     g = _make_schedule_game()
     result = process_game_lineup(g, cache, "2026-07-20", schedule_map, all_players)
 
+    expected = _with_opponent(home, 554430) + _with_opponent(away, 543037)
     assert result is True
     assert cache == {
-        "700001": {"date": "2026-07-20", "players": home + away}
+        "700001": {"date": "2026-07-20", "players": expected}
     }  # overwritten with today
-    assert all_players == home + away  # fresh fetch, not the stale cached players
+    assert all_players == expected  # fresh fetch, not the stale cached players
 
 
 # ---- group_picks_by_start_time ----
@@ -1262,6 +1283,37 @@ def test_parse_bvp_stats_splits_seasons_and_career():
     assert bvp["by_season"][2026]["hits"] == 2
 
 
+def test_parse_bvp_stats_prefers_season_splits_over_a_disagreeing_api_total():
+    """Observed live: vsPlayerTotal reported 2 PA against a 3 PA season split."""
+    payload = _vsplayer_payload(
+        [_split(season=2026, pa=3, ab=3, h=0)], total=_split(pa=2, ab=2, h=0)
+    )
+    assert parse_bvp_stats(payload)["career"]["plateAppearances"] == 3
+
+
+def test_parse_bvp_stats_falls_back_to_api_total_without_season_splits():
+    payload = _vsplayer_payload([], total=_split(pa=9, ab=8, h=3, so=1, bb=1))
+    bvp = parse_bvp_stats(payload)
+    assert bvp["by_season"] == {}
+    assert bvp["career"]["plateAppearances"] == 9
+
+
+def test_parse_bvp_stats_sums_repeated_splits_for_one_season():
+    payload = _vsplayer_payload(
+        [
+            _split(season=2026, pa=4, ab=4, h=1, so=1, bb=0),
+            _split(season=2026, pa=3, ab=2, h=1, so=0, bb=1),
+        ]
+    )
+    assert parse_bvp_stats(payload)["by_season"][2026] == {
+        "plateAppearances": 7,
+        "atBats": 6,
+        "hits": 2,
+        "strikeOuts": 1,
+        "baseOnBalls": 1,
+    }
+
+
 def test_parse_bvp_stats_season_as_string_is_coerced_to_int():
     payload = _vsplayer_payload([_split(season="2026", pa=4, ab=4, h=1)])
     assert 2026 in parse_bvp_stats(payload)["by_season"]
@@ -1285,9 +1337,7 @@ def test_parse_bvp_stats_derives_career_when_total_group_absent():
 
 
 def test_parse_bvp_stats_repeated_total_group_is_harmless():
-    payload = _vsplayer_payload(
-        [_split(season=2026, pa=4, ab=4, h=1)], total=_split(pa=4, ab=4, h=1)
-    )
+    payload = _vsplayer_payload([], total=_split(pa=4, ab=4, h=1))
     payload["stats"].append(
         {"type": {"displayName": "vsPlayerTotal"}, "splits": [_split(pa=4, ab=4, h=1)]}
     )
@@ -1322,8 +1372,10 @@ def test_aggregate_lines_tolerates_missing_and_null_fields():
 def test_calc_01_career_hit_rate():
     bvp = parse_bvp_stats(
         _vsplayer_payload(
-            [_split(season=2026, pa=6, ab=6, h=2)],
-            total=_split(pa=76, ab=60, h=23, so=12, bb=15),
+            [
+                _split(season=2021, pa=70, ab=54, h=21, so=12, bb=15),
+                _split(season=2026, pa=6, ab=6, h=2),
+            ]
         )
     )
     result = calc_01_bvp_career_hit_rate(bvp)
@@ -1404,8 +1456,10 @@ def test_calc_03_returns_none_when_window_is_empty():
 def test_calc_04_contact_rate_excludes_strikeouts_and_walks():
     bvp = parse_bvp_stats(
         _vsplayer_payload(
-            [_split(season=2026, pa=6, ab=6, h=2)],
-            total=_split(pa=76, ab=60, h=23, so=12, bb=15),
+            [
+                _split(season=2021, pa=70, ab=54, h=21, so=12, bb=15),
+                _split(season=2026, pa=6, ab=6, h=2),
+            ]
         )
     )
     assert calc_04_bvp_contact_rate(bvp) == pytest.approx(((76 - 12 - 15) / 76, 76))
@@ -1448,3 +1502,302 @@ def test_compute_bvp_calculators_returns_all_implemented_keys():
 def test_compute_bvp_calculators_all_none_for_first_time_matchup():
     results = compute_bvp_calculators({"career": None, "by_season": {}}, 2026)
     assert set(results.values()) == {None}
+
+
+# ---- probable pitcher plumbing ----
+
+
+def _make_game_with_pitchers(home_pitcher=None, away_pitcher=None, **kw):
+    kw.setdefault("home_id", 119)
+    kw.setdefault("away_id", 137)
+    game = _make_game(**kw)
+    if home_pitcher is not None:
+        game["teams"]["home"]["probablePitcher"] = {"id": home_pitcher}
+    if away_pitcher is not None:
+        game["teams"]["away"]["probablePitcher"] = {"id": away_pitcher}
+    return game
+
+
+@pytest.mark.parametrize(
+    "game, side, expected",
+    [
+        ({"teams": {"home": {"probablePitcher": {"id": 543037}}}}, "home", 543037),
+        ({"teams": {"home": {}}}, "home", None),
+        ({"teams": {"home": {"probablePitcher": None}}}, "home", None),
+        ({"teams": {}}, "away", None),
+        ({}, "away", None),
+    ],
+)
+def test_probable_pitcher_id(game, side, expected):
+    assert probable_pitcher_id(game, side) == expected
+
+
+def test_fetch_schedule_carries_probable_pitcher_ids(monkeypatch):
+    game = _make_game_with_pitchers(home_pitcher=543037, away_pitcher=554430)
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse(_schedule_payload([game]))
+    )
+    result = fetch_schedule("2026-07-18")[0]
+    assert result["home_pitcher_id"] == 543037
+    assert result["away_pitcher_id"] == 554430
+
+
+def test_fetch_schedule_unannounced_starters_are_none(monkeypatch):
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *a, **kw: FakeResponse(
+            _schedule_payload([_make_game(home_id=119, away_id=137)])
+        ),
+    )
+    result = fetch_schedule("2026-07-18")[0]
+    assert result["home_pitcher_id"] is None
+    assert result["away_pitcher_id"] is None
+
+
+def test_fetch_schedule_requests_probable_pitcher_hydration(monkeypatch):
+    captured = {}
+
+    def fake_get(url, params=None, timeout=None):
+        captured.update(params or {})
+        return FakeResponse(_schedule_payload([]))
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    fetch_schedule("2026-07-18")
+    assert captured["hydrate"] == "probablePitcher"
+
+
+def test_process_game_lineup_assigns_the_opposing_side_starter(monkeypatch):
+    home = [{"id": 111, "fullName": "Home Bat", "team_id": 119}]
+    away = [{"id": 222, "fullName": "Away Bat", "team_id": 137}]
+    monkeypatch.setattr(main, "fetch_lineup", lambda pk: {"home": home, "away": away})
+
+    all_players = []
+    g = _make_schedule_game(home_pitcher_id=543037, away_pitcher_id=554430)
+    process_game_lineup(g, {}, "2026-07-20", {}, all_players)
+
+    by_name = {p["fullName"]: p["opposing_pitcher_id"] for p in all_players}
+    assert by_name == {"Home Bat": 554430, "Away Bat": 543037}
+
+
+def test_process_game_lineup_unannounced_starter_leaves_opponent_none(monkeypatch):
+    home = [{"id": 111, "fullName": "Home Bat", "team_id": 119}]
+    monkeypatch.setattr(main, "fetch_lineup", lambda pk: {"home": home, "away": []})
+
+    all_players = []
+    g = _make_schedule_game(home_pitcher_id=None, away_pitcher_id=None)
+    process_game_lineup(g, {}, "2026-07-20", {}, all_players)
+
+    assert all_players[0]["opposing_pitcher_id"] is None
+
+
+# ---- fetch_bvp_stats ----
+
+
+def test_fetch_bvp_stats_parses_response(monkeypatch):
+    payload = _vsplayer_payload(
+        [_split(season=2021, pa=70, ab=60, h=21), _split(season=2026, pa=6, ab=6, h=2)]
+    )
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse(payload))
+    bvp = fetch_bvp_stats(592450, 543037)
+    assert bvp["career"]["hits"] == 23
+    assert bvp["by_season"][2026]["plateAppearances"] == 6
+
+
+def test_fetch_bvp_stats_sends_opposing_player_id(monkeypatch):
+    captured = {}
+
+    def fake_get(url, params=None, timeout=None):
+        captured["url"] = url
+        captured.update(params or {})
+        return FakeResponse({"stats": []})
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    fetch_bvp_stats(592450, 543037)
+    assert captured["url"].endswith("/people/592450/stats")
+    assert captured["opposingPlayerId"] == 543037
+    assert captured["stats"] == "vsPlayer"
+    assert captured["group"] == "hitting"
+
+
+def test_fetch_bvp_stats_request_exception_returns_empty_payload(monkeypatch, capsys):
+    def boom(*a, **kw):
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr(requests, "get", boom)
+    assert fetch_bvp_stats(592450, 543037) == {"career": None, "by_season": {}}
+    assert "BvP fetch error" in capsys.readouterr().out
+
+
+def test_fetch_bvp_stats_non_2xx_returns_empty_payload(monkeypatch):
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse({}, 503))
+    assert fetch_bvp_stats(592450, 543037) == {"career": None, "by_season": {}}
+
+
+# ---- attach_bvp_calculators ----
+
+
+def test_attach_bvp_calculators_adds_all_four_keys(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "fetch_bvp_stats",
+        lambda b, p: parse_bvp_stats(
+            _vsplayer_payload([_split(season=2026, pa=6, ab=6, h=2, so=1, bb=0)])
+        ),
+    )
+    data = {"Player": "Someone"}
+    attach_bvp_calculators(data, 592450, 543037, season=2026)
+    assert data["CALC_01"] == pytest.approx((2 / 6, 6))
+    assert data["CALC_02"] == pytest.approx((2 / 6, 6))
+    assert data["CALC_03"] == pytest.approx((2 / 6, 6))
+    assert data["CALC_04"] == pytest.approx((5 / 6, 6))
+
+
+def test_attach_bvp_calculators_skips_fetch_without_a_starter(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        main, "fetch_bvp_stats", lambda b, p: calls.append((b, p)) or {}
+    )
+    data = {"Player": "Someone"}
+    attach_bvp_calculators(data, 592450, None, season=2026)
+    assert calls == []
+    assert data["CALC_01"] is None
+    assert data["CALC_04"] is None
+
+
+def test_attach_bvp_calculators_defaults_season_to_current_year(monkeypatch):
+    seasons = []
+    monkeypatch.setattr(
+        main, "fetch_bvp_stats", lambda b, p: {"career": None, "by_season": {}}
+    )
+    monkeypatch.setattr(
+        main,
+        "compute_bvp_calculators",
+        lambda bvp, season: seasons.append(season) or {},
+    )
+    attach_bvp_calculators({}, 592450, 543037)
+    assert seasons == [datetime.today().year]
+
+
+def test_compile_player_data_attaches_bvp_for_qualifying_players(monkeypatch):
+    monkeypatch.setattr(main, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        main,
+        "scrape_player_data",
+        lambda player_id, player_name, team_id, schedule_map=None: {
+            "Player": player_name,
+            "At Bats": 10,
+            "Hits": 5,
+            "Walks": 1,
+            "Strikeouts": 2,
+        },
+    )
+    seen = []
+    monkeypatch.setattr(
+        main,
+        "fetch_bvp_stats",
+        lambda batter_id, pitcher_id: (
+            seen.append((batter_id, pitcher_id)) or {"career": None, "by_season": {}}
+        ),
+    )
+    players = [{**_make_player("Bat", 1), "opposing_pitcher_id": 543037}]
+    result = compile_player_data(players, limit=None)
+    assert seen == [(1, 543037)]
+    assert "CALC_01" in result[0]
+
+
+def test_compile_player_data_tolerates_lineup_entry_cached_before_bvp(monkeypatch):
+    """Players cached earlier today predate opposing_pitcher_id — degrade, don't crash."""
+    monkeypatch.setattr(main, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        main,
+        "scrape_player_data",
+        lambda player_id, player_name, team_id, schedule_map=None: {
+            "Player": player_name,
+            "At Bats": 10,
+            "Hits": 5,
+            "Walks": 1,
+            "Strikeouts": 2,
+        },
+    )
+    fetch_calls = []
+    monkeypatch.setattr(
+        main, "fetch_bvp_stats", lambda b, p: fetch_calls.append(b) or {}
+    )
+    result = compile_player_data([_make_player("Legacy", 1)], limit=None)
+    assert fetch_calls == []
+    assert result[0]["CALC_01"] is None
+
+
+# ---- BvP table rendering ----
+
+
+@pytest.mark.parametrize(
+    "rate, expected",
+    [
+        (None, "-"),
+        (BvPRate(0.302, 76), ".302 (76)"),
+        (BvPRate(0.0, 3), ".000 (3)"),
+        (BvPRate(1.0, 2), "1.000 (2)"),
+        (BvPRate(1 / 3, 3), ".333 (3)"),
+    ],
+)
+def test_format_bvp(rate, expected):
+    assert format_bvp(rate) == expected
+
+
+def test_build_table_row_includes_bvp_columns():
+    data = {
+        "Player": "Bat",
+        "Team": "NYY",
+        "Hits": 5,
+        "At Bats": 10,
+        "Walks": 1,
+        "Strikeouts": 2,
+        "probability": 0.75,
+        "CALC_01": BvPRate(0.302, 76),
+        "CALC_03": BvPRate(0.25, 4),
+    }
+    assert build_table_row(data) == [
+        "Bat",
+        "NYY",
+        "5-10",
+        "1/2",
+        "75.0%",
+        ".302 (76)",
+        ".250 (4)",
+    ]
+
+
+def test_build_table_row_without_bvp_keys_renders_dashes():
+    data = {
+        "Player": "Bat",
+        "Team": "NYY",
+        "Hits": 5,
+        "At Bats": 10,
+        "Walks": 1,
+        "Strikeouts": 2,
+        "probability": 0.75,
+    }
+    assert build_table_row(data)[-2:] == ["-", "-"]
+
+
+def test_probable_hitters_prints_bvp_headers(capsys):
+    summary = [
+        {
+            "Player": f"P{i}",
+            "Team": "NYY",
+            "Hits": i,
+            "At Bats": 10,
+            "Walks": 1,
+            "Strikeouts": 2,
+            "probability": i / 10,
+            "CALC_01": BvPRate(0.3, 20),
+            "CALC_03": None,
+        }
+        for i in range(1, 4)
+    ]
+    probable_hitters(summary, n=1)
+    out = capsys.readouterr().out
+    assert "BvP Car" in out and "BvP 3Y" in out
+    assert ".300 (20)" in out

@@ -8,6 +8,7 @@ from prettytable import PrettyTable
 from time import sleep
 import random
 
+from calculators import BvPRate, compute_bvp_calculators, parse_bvp_stats
 from teams import TEAM_ID_TO_ABBR
 
 
@@ -99,16 +100,24 @@ def log_schedule_fetch_error(exc, path=SCHEDULE_ERROR_LOG_FILE):
         f.write(f"{timestamp} — {exc}\n")
 
 
+def probable_pitcher_id(game: dict, side: str) -> int | None:
+    """Return the probable starter's player id for *side*, or None if unannounced."""
+    pitcher = game.get("teams", {}).get(side, {}).get("probablePitcher")
+    return pitcher.get("id") if pitcher else None
+
+
 def fetch_schedule(date: str) -> list[dict]:
     """Return per-game records for all non-postponed games on *date* (YYYY-MM-DD).
 
-    Each record: {gamePk, gameNumber, home_team_id, away_team_id, start_dt}.
-    Both games of a doubleheader appear as distinct entries.
+    Each record: {gamePk, gameNumber, home_team_id, away_team_id, start_dt,
+    home_pitcher_id, away_pitcher_id}. Both games of a doubleheader appear as
+    distinct entries. Probable pitcher ids are None until the team announces a
+    starter, and stay None for an opener the API does not list.
     """
     try:
         resp = requests.get(
             f"{MLB_API_BASE}/schedule",
-            params={"sportId": 1, "date": date},
+            params={"sportId": 1, "date": date, "hydrate": "probablePitcher"},
             timeout=15,
         )
         resp.raise_for_status()
@@ -131,6 +140,8 @@ def fetch_schedule(date: str) -> list[dict]:
                 "home_team_id": game["teams"]["home"]["team"]["id"],
                 "away_team_id": game["teams"]["away"]["team"]["id"],
                 "start_dt": start_dt,
+                "home_pitcher_id": probable_pitcher_id(game, "home"),
+                "away_pitcher_id": probable_pitcher_id(game, "away"),
             }
         )
     return schedule
@@ -268,6 +279,53 @@ def scrape_player_data(
     }
 
 
+def fetch_bvp_stats(batter_id: int, pitcher_id: int) -> dict:
+    """Fetch head-to-head splits for *batter_id* against *pitcher_id*.
+
+    One request feeds every Category 1 calculator: `stats=vsPlayer` returns a
+    split per season the pair has faced each other plus a career total, so
+    CALC_01-04 need no follow-up calls. Returns an empty normalized payload on
+    request failure rather than raising.
+    """
+    try:
+        resp = requests.get(
+            f"{MLB_API_BASE}/people/{batter_id}/stats",
+            params={
+                "stats": "vsPlayer",
+                "group": "hitting",
+                "opposingPlayerId": pitcher_id,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"BvP fetch error for batter {batter_id} vs pitcher {pitcher_id} ({exc})")
+        return {"career": None, "by_season": {}}
+    return parse_bvp_stats(resp.json())
+
+
+def attach_bvp_calculators(
+    player_data: dict,
+    batter_id: int,
+    pitcher_id: int | None,
+    season: int | None = None,
+) -> dict:
+    """Add CALC_01-04 to *player_data* in place and return it.
+
+    With no announced opposing starter — or a lineup entry cached before this
+    field existed — every calculator resolves to None rather than being omitted,
+    so downstream consumers can rely on the keys being present.
+    """
+    season = season or datetime.today().year
+    bvp = (
+        fetch_bvp_stats(batter_id, pitcher_id)
+        if pitcher_id is not None
+        else {"career": None, "by_season": {}}
+    )
+    player_data.update(compute_bvp_calculators(bvp, season))
+    return player_data
+
+
 def process_game_lineup(
     g: dict,
     queried_games_cache: dict,
@@ -298,7 +356,15 @@ def process_game_lineup(
     if lineup["home"] or lineup["away"]:
         schedule_map[g["home_team_id"]] = hour
         schedule_map[g["away_team_id"]] = hour
-        players = lineup["home"] + lineup["away"]
+        # Each batter faces the *other* side's probable starter; the flattened
+        # list loses which side a batter was on, so resolve it here.
+        players = [
+            {**p, "opposing_pitcher_id": g.get("away_pitcher_id")}
+            for p in lineup["home"]
+        ] + [
+            {**p, "opposing_pitcher_id": g.get("home_pitcher_id")}
+            for p in lineup["away"]
+        ]
         all_players.extend(players)
         # Only mark after a posted lineup so a subsequent run can still pull it
         # once it posts.
@@ -347,6 +413,9 @@ def compile_player_data(
             player_data["probability"] = binomial_probability(
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
+            attach_bvp_calculators(
+                player_data, player_id, player.get("opposing_pitcher_id")
+            )
             summary_data.append(player_data)
             print(f"ok  ({player_data['Hits']}-{player_data['At Bats']})")
             cache.pop(str(player_id), None)
@@ -356,6 +425,26 @@ def compile_player_data(
         sleep(random.uniform(0.6, 1.8))
 
     return summary_data
+
+
+def format_bvp(rate: BvPRate | None) -> str:
+    """Render a BvP rate as `.302 (76)` — rate over the PAs behind it — or `-` if unfaced."""
+    if rate is None:
+        return "-"
+    return f"{rate.rate:.3f}".lstrip("0") + f" ({rate.denominator})"
+
+
+def build_table_row(data: dict) -> list[str]:
+    """Return one display row for *data*, a compiled player summary entry."""
+    return [
+        data["Player"],
+        data["Team"],
+        f"{data['Hits']}-{data['At Bats']}",
+        f"{data['Walks']}/{data['Strikeouts']}",
+        f"{data['probability']:.1%}",
+        format_bvp(data.get("CALC_01")),
+        format_bvp(data.get("CALC_03")),
+    ]
 
 
 def probable_hitters(summary_data, n=5):
@@ -372,34 +461,26 @@ def probable_hitters(summary_data, n=5):
     table = PrettyTable()
     today = datetime.today()
     table.title = f"{today.strftime('%B')} {today.day}, {today.year}"
-    table.field_names = ["Player", "Team", "H-AB", "BB/K", "Prob %"]
+    # BvP columns are informational only — the sort key stays the last-5-game
+    # binomial probability, since a 1-for-2 career line is not evidence of .500.
+    table.field_names = [
+        "Player",
+        "Team",
+        "H-AB",
+        "BB/K",
+        "Prob %",
+        "BvP Car",
+        "BvP 3Y",
+    ]
 
     for data in top_players:
-        probability = f"{data['probability']:.1%}"
-        table.add_row(
-            [
-                data["Player"],
-                data["Team"],
-                f"{data['Hits']}-{data['At Bats']}",
-                f"{data['Walks']}/{data['Strikeouts']}",
-                probability,
-            ]
-        )
+        table.add_row(build_table_row(data))
 
     # Separator row
     table.add_row(["---"] * len(table.field_names))
 
     for data in low_players:
-        probability = f"{data['probability']:.1%}"
-        table.add_row(
-            [
-                data["Player"],
-                data["Team"],
-                f"{data['Hits']}-{data['At Bats']}",
-                f"{data['Walks']}/{data['Strikeouts']}",
-                probability,
-            ]
-        )
+        table.add_row(build_table_row(data))
 
     # Display the output
     print(table)

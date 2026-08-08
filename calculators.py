@@ -53,12 +53,18 @@ def parse_bvp_stats(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw `stats=vsPlayer` response into the calculator payload.
 
     A single `vsPlayer` request returns one split per season the pair has faced
-    each other, plus a `vsPlayerTotal` group holding the career line (the API
-    appends that group unasked, and may repeat it — later copies are identical,
-    so the last one wins harmlessly). Malformed or empty responses normalize to
-    ``{"career": None, "by_season": {}}`` rather than raising.
+    each other, plus a `vsPlayerTotal` group holding the API's own career line
+    (that group is appended unasked, and is sometimes repeated).
+
+    Career is summed from the per-season splits rather than read from
+    `vsPlayerTotal`, which has been observed to disagree with them — a batter
+    whose only season split showed 3 PA carried a 2 PA career total, which would
+    make CALC_01's sample smaller than CALC_03's window over the same matchup.
+    The API total is used only when no season splits came back at all. Malformed
+    or empty responses normalize to ``{"career": None, "by_season": {}}`` rather
+    than raising.
     """
-    career: dict[str, int] | None = None
+    api_total: dict[str, int] | None = None
     by_season: dict[int, dict[str, int]] = {}
 
     for group in payload.get("stats") or []:
@@ -71,13 +77,14 @@ def parse_bvp_stats(payload: dict[str, Any]) -> dict[str, Any]:
                 season = split.get("season")
                 if season is None:
                     continue
-                by_season[int(season)] = line
+                year = int(season)
+                # A season can arrive as more than one split (a midseason trade
+                # splits it by team); sum them rather than letting one win.
+                by_season[year] = aggregate_lines([by_season.get(year, {}), line])
             elif group_name == "vsPlayerTotal":
-                career = line
+                api_total = line
 
-    # Fall back to the per-season splits if the API omitted the total group.
-    if career is None and by_season:
-        career = aggregate_lines(by_season.values())
+    career = aggregate_lines(by_season.values()) if by_season else api_total
 
     return {"career": career, "by_season": by_season}
 

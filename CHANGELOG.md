@@ -5,6 +5,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-07
+
+### Added
+- `calculators.py`: Category 1 (batter-vs-pitcher) probability calculators from `ROADMAP.md` —
+  `CALC_01` career BvP hit rate, `CALC_02` season BvP hit rate, `CALC_03` trailing 3-calendar-year
+  BvP hit rate, and `CALC_04` BvP contact rate. Pure functions with no network I/O; each returns
+  a `BvPRate` carrying both the rate and the plate appearances behind it, or `None` when the pair
+  has no shared history.
+- `parse_bvp_stats`: normalizes a raw MLB Stats API `stats=vsPlayer` response into
+  `{"career": ..., "by_season": {...}}`. Career is summed from the per-season splits rather than
+  read from the API's `vsPlayerTotal` group, which was observed reporting 2 PA for a matchup whose
+  only season split showed 3 PA.
+- `fetch_bvp_stats` / `attach_bvp_calculators` in `main.py`: one `vsPlayer` request per batter
+  covers all four calculators, folded into the existing per-player loop so no extra throttle
+  delay is incurred. A batter with no announced opposing starter gets all-`None` calculator keys
+  without a request being made.
+- `probable_pitcher_id` and `hydrate=probablePitcher` on the `/schedule` request: `fetch_schedule`
+  records now carry `home_pitcher_id` / `away_pitcher_id` (`None` until announced).
+- `BvP Car` and `BvP 3Y` columns in the output table, rendered as `.302 (76)` — rate over sample
+  size — or `-` when the matchup has no history. Extracted `build_table_row` / `format_bvp` so the
+  top and bottom halves of the table share one row builder.
+
+### Changed
+- `process_game_lineup` now attaches `opposing_pitcher_id` to each lineup entry, resolving each
+  batter against the *other* side's probable starter before the home/away lists are flattened.
+  Lineup entries cached earlier the same day predate this field and degrade to `None` rather than
+  failing.
+
+### Notes
+- BvP values are informational only — the ranking is still sorted by the last-5-game binomial
+  probability. Shrinking a small BvP sample toward a prior belongs in `CALC_75` (Bayesian
+  composite), which is not yet implemented.
+- `CALC_05`-`CALC_08` (BvP hard-hit %, xBA/xwOBA, whiff rate, putaway rate) are not implemented:
+  they need Statcast pitch-level data the MLB Stats API does not expose per batter-pitcher pair.
+
+---
+
 ## 2026-07-26
 
 ### Changed

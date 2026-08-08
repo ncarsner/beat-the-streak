@@ -12,7 +12,8 @@ For each player in the day's posted lineup the tool:
 4. Takes the **last 5 games** played, provided the most recent of those games fell within the past week.
 5. Aggregates at-bats (AB), hits (H), walks (BB), and strikeouts (SO) across those games.
 6. Computes a **binomial hit-probability** using the player's recent batting average and plate-appearance rate.
-7. Outputs a ranked table showing the top `n` candidates (and the bottom `n` as a contrasting reference).
+7. Looks up the batter's head-to-head history against the opposing probable starter (see [Batter-vs-pitcher calculators](#batter-vs-pitcher-calculators)).
+8. Outputs a ranked table showing the top `n` candidates (and the bottom `n` as a contrasting reference).
 
 The metric is intentionally lightweight and designed to complement, not replace, manual lineup review.
 
@@ -129,24 +130,54 @@ python main.py --cooldown-days 3
 
 Use `--cooldown-days 0` to disable the cooldown and recheck every player on every run.
 
+### Batter-vs-pitcher calculators
+
+`calculators.py` implements the Category 1 (batter-vs-pitcher, "BvP") considerations from
+`ROADMAP.md`, using the MLB Stats API's `vsPlayer` stat type. One request per batter covers
+all four — it returns a split for every season the pair has faced each other, plus a career
+total:
+
+| ID | Calculator | Definition |
+|---|---|---|
+| `CALC_01` | BvP Career Hit Rate | H / PA across all head-to-head plate appearances |
+| `CALC_02` | BvP Season Hit Rate | H / PA head-to-head in the current season |
+| `CALC_03` | BvP Recent Window Hit Rate | H / PA head-to-head over the last 3 calendar years |
+| `CALC_04` | BvP Contact Rate | (PA − SO − BB) / PA head-to-head |
+
+Each returns a `BvPRate` — the rate paired with the plate appearances behind it — or `None`
+when the pair has never faced each other, when no starter has been announced, or when the
+game begins with an unlisted opener. **These values are displayed only; they do not affect
+the ranking.** BvP samples are small (a 1-for-2 career line is not evidence of a .500 hitter),
+so weighting them belongs in the Bayesian composite (`CALC_75`), which is not yet implemented.
+
+`CALC_05`–`CALC_08` (hard-hit %, xBA/xwOBA, whiff rate, putaway rate) require Statcast
+pitch-level data that the MLB Stats API does not expose per batter-pitcher pair, and are not
+implemented.
+
+Career totals are summed from the per-season splits rather than read from the API's own
+`vsPlayerTotal` line, which has been observed to disagree with them.
+
 ### Output format
 
 ```
-+----------------------------------------------------+
-|                  July 11, 2026                      |
-+------------------+------+-------+------+---------+
-| Player           | Team | H-AB  | BB/K | Prob %  |
-+------------------+------+-------+------+---------+
-| Luis Arraez      | SD   | 8-20  | 3/0  | 90.5%   |
-| Manny Machado    | SD   | 6-16  | 4/4  | 84.7%   |
-| ...              | ...  | ...   | ...  | ...     |
-+------------------+------+-------+------+---------+
-| ---              | ---  | ---   | ---  | ---     |
-+------------------+------+-------+------+---------+
-| TJ Friedl        | CIN  | 1-14  | 1/6  | 19.9%   |
-| ...              | ...  | ...   | ...  | ...     |
-+------------------+------+-------+------+---------+
++----------------------------------------------------------------------+
+|                            July 11, 2026                             |
++------------------+------+-------+------+---------+-----------+--------+
+| Player           | Team | H-AB  | BB/K | Prob %  | BvP Car   | BvP 3Y |
++------------------+------+-------+------+---------+-----------+--------+
+| Luis Arraez      | SD   | 8-20  | 3/0  | 90.5%   | .316 (19) | .400 (5)|
+| Manny Machado    | SD   | 6-16  | 4/4  | 84.7%   | -         | -      |
+| ...              | ...  | ...   | ...  | ...     | ...       | ...    |
++------------------+------+-------+------+---------+-----------+--------+
+| ---              | ---  | ---   | ---  | ---     | ---       | ---    |
++------------------+------+-------+------+---------+-----------+--------+
+| TJ Friedl        | CIN  | 1-14  | 1/6  | 19.9%   | .000 (3)  | .000 (3)|
+| ...              | ...  | ...   | ...  | ...     | ...       | ...    |
++------------------+------+-------+------+---------+-----------+--------+
 ```
+
+`BvP Car` (`CALC_01`) and `BvP 3Y` (`CALC_03`) show the head-to-head rate followed by the
+plate appearances it was computed over; `-` means no shared history or no announced starter.
 
 Team abbreviations are resolved by numeric team ID via `TEAM_ID_TO_ABBR` in `teams.py`.
 Since team IDs come directly from the lineup data, no name-matching or gap-tracking file
