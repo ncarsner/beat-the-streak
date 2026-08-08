@@ -1,21 +1,21 @@
-"""MLB Stats API fetches that feed the calculator modules.
+"""Network fetchers that feed the Category 1 BvP calculators.
 
-The only module in this package that touches the network. Pure calculator
-modules never import it, which is what keeps their arithmetic testable without
-mocking a request. Fetchers are named `fetch_<subject>` and return a normalized
-payload — never a raw response — so a category's parser stays the single place
-that knows the API's response shape.
+`fetch_bvp_stats` issues one MLB Stats API request per batter and returns a
+normalized BvP payload (career + by-season splits).
 
-Nothing here is called during a run yet; these are the seams the composite model
-(`CALC_75`) will call once there is something to weight.
+`fetch_bvp_statcast` pulls one season of Statcast pitch records and filters to
+the batter-pitcher matchup locally.
+
+Both return a safe empty payload on failure rather than raising, so a category
+calculator never sees a network error.
 """
 
 from datetime import date, datetime
 
 import requests
 
-from calculators.category_01_bvp_matchups import compute_category_01, parse_bvp_stats
-from calculators.common import Rate
+from calculators.category_01_bvp_matchups import parse_bvp_stats
+from calculators.sources.common import _clean
 from mlb_api import MLB_API_BASE
 
 
@@ -42,26 +42,6 @@ STATCAST_FIELDS = (
 
 # Statcast's first full season; nothing earlier can be fetched.
 STATCAST_FIRST_SEASON = 2015
-
-
-def _clean(value, isna):
-    """Convert any pandas missing-value sentinel to None, leaving the rest alone.
-
-    Takes pandas' own `isna` rather than testing for NaN by hand: pandas has
-    more than one missing sentinel, and they are not interchangeable. `np.nan`
-    is a float that fails an equality check against itself, but `pd.NA` — what a
-    nullable string column yields, and `events` is unset on every pitch that
-    does not end a plate appearance — is neither a float nor comparable, so a
-    hand-rolled NaN check passes it straight through to calculators promised
-    they would only ever see None.
-    """
-    if value is None:
-        return None
-    try:
-        missing = bool(isna(value))
-    except (TypeError, ValueError):
-        return value
-    return None if missing else value
 
 
 def fetch_bvp_statcast(
@@ -128,32 +108,3 @@ def fetch_bvp_stats(batter_id: int, pitcher_id: int) -> dict:
         print(f"BvP fetch error for batter {batter_id} vs pitcher {pitcher_id} ({exc})")
         return empty_bvp()
     return parse_bvp_stats(resp.json())
-
-
-def attach_category_01(
-    player_data: dict,
-    batter_id: int,
-    pitcher_id: int | None,
-    season: int | None = None,
-) -> dict:
-    """Add CALC_01-04 to *player_data* in place and return it.
-
-    With no announced opposing starter — or a lineup entry cached before that
-    field existed — every calculator resolves to None rather than being omitted,
-    so consumers can rely on the keys being present without a request having
-    been made.
-
-    Costs two fetches per batter when a starter is known: one MLB Stats API
-    request for CALC_01-04, and one Statcast season pull for CALC_05-08.
-    """
-    season = season or datetime.today().year
-    if pitcher_id is None:
-        results: dict[str, Rate | None] = compute_category_01(empty_bvp(), season)
-    else:
-        results = compute_category_01(
-            fetch_bvp_stats(batter_id, pitcher_id),
-            season,
-            fetch_bvp_statcast(batter_id, pitcher_id, season),
-        )
-    player_data.update(results)
-    return player_data
