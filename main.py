@@ -8,11 +8,9 @@ from prettytable import PrettyTable
 from time import sleep
 import random
 
+from mlb_api import MLB_API_BASE
 from teams import TEAM_ID_TO_ABBR
 
-
-# MLB Stats API — official, free JSON API; no scraping, no bot-blocking
-MLB_API_BASE = "https://statsapi.mlb.com/api/v1"
 
 # Limit the number of players fetched per run for validation purposes.
 # Increase or set to None to process all players in the provided pool.

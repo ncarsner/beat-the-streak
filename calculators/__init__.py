@@ -19,29 +19,26 @@ Layout and naming, applied to every category as it lands:
 Implemented so far: category 1 (batter vs. pitcher). Nothing in this package is
 called during a run yet — the calculators are being validated individually and
 will be consumed together by the composite model (`CALC_75`).
+
+Only the cross-category surface is re-exported here. Calculators themselves are
+imported from the module that owns them —
+``from calculators.category_01_bvp_matchups import calc_01_bvp_career_hit_rate``
+— so eleven categories cannot collide in one flat namespace, and a
+category-specific constant stays where it belongs.
 """
 
-from calculators.common import COUNTING_STATS, Rate, aggregate_lines, empty_line
-from calculators.category_01_bvp_matchups import (
-    RECENT_WINDOW_YEARS,
-    calc_01_bvp_career_hit_rate,
-    calc_02_bvp_season_hit_rate,
-    calc_03_bvp_recent_window_hit_rate,
-    calc_04_bvp_contact_rate,
-    compute_category_01,
-    parse_bvp_stats,
+from calculators.common import (
+    COUNTING_STATS,
+    Rate,
+    aggregate_lines,
+    empty_line,
+    rate_or_none,
 )
 
 __all__ = [
     "COUNTING_STATS",
-    "RECENT_WINDOW_YEARS",
     "Rate",
     "aggregate_lines",
-    "calc_01_bvp_career_hit_rate",
-    "calc_02_bvp_season_hit_rate",
-    "calc_03_bvp_recent_window_hit_rate",
-    "calc_04_bvp_contact_rate",
-    "compute_category_01",
     "empty_line",
-    "parse_bvp_stats",
+    "rate_or_none",
 ]

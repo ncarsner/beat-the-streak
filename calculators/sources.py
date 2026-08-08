@@ -16,9 +16,7 @@ import requests
 
 from calculators.category_01_bvp_matchups import compute_category_01, parse_bvp_stats
 from calculators.common import Rate
-
-
-MLB_API_BASE = "https://statsapi.mlb.com/api/v1"
+from mlb_api import MLB_API_BASE
 
 
 def empty_bvp() -> dict:

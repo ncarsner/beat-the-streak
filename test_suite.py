@@ -33,15 +33,14 @@ from main import (
     refresh_opposing_pitchers,
     DEFAULT_COOLDOWN_DAYS,
 )
-from calculators import (
-    aggregate_lines,
-    empty_line,
-    parse_bvp_stats,
+from calculators import aggregate_lines, empty_line
+from calculators.category_01_bvp_matchups import (
     calc_01_bvp_career_hit_rate,
     calc_02_bvp_season_hit_rate,
     calc_03_bvp_recent_window_hit_rate,
     calc_04_bvp_contact_rate,
     compute_category_01,
+    parse_bvp_stats,
 )
 from calculators import sources
 from calculators.sources import attach_category_01, fetch_bvp_stats

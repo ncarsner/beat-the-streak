@@ -142,6 +142,8 @@ calculators/
     sources.py                     # the only module here that touches the network
 ```
 
+`MLB_API_BASE` lives in `mlb_api.py`, shared by `main.py` and `calculators/sources.py`.
+
 The convention, applied to each category as it lands:
 
 | Thing | Pattern | Example |

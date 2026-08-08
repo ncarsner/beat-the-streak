@@ -12,7 +12,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   to carry all 11: `category_NN_<slug>.py` modules holding `calc_NN_<slug>` functions and a
   `compute_category_NN` aggregate, `common.py` for shared types and counting-stat helpers, and
   `sources.py` as the single module that touches the network. Pure calculator modules never
-  import `sources`, so their arithmetic tests need no request mocking.
+  import `sources`, so their arithmetic tests need no request mocking. The package's
+  `__init__` re-exports only the cross-category surface (`Rate` and the counting-stat helpers);
+  calculators are imported from the module that owns them, so eleven categories cannot collide
+  in one flat namespace.
 - `calculators/category_01_bvp_matchups.py`: Category 1 (batter-vs-pitcher) calculators —
   `CALC_01` career BvP hit rate, `CALC_02` season BvP hit rate, `CALC_03` trailing 3-calendar-year
   BvP hit rate, and `CALC_04` BvP contact rate. Pure functions with no network I/O; each returns
@@ -30,6 +33,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   one `vsPlayer` request per batter covers all four calculators. A batter with no announced
   opposing starter gets all-`None` calculator keys without a request being made. **Neither is
   called during a run yet** — see Notes.
+- `mlb_api.py`: single home for `MLB_API_BASE`, now that both the run path and the calculator
+  fetch layer hit the same host. Previously defined in `main.py` only.
 - `probable_pitcher_id` and `hydrate=probablePitcher` on the `/schedule` request: `fetch_schedule`
   records now carry `home_pitcher_id` / `away_pitcher_id` (`None` until announced).
 
