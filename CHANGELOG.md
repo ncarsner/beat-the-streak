@@ -5,6 +5,62 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-09
+
+### Added
+- Category 4 plate-discipline and zone-location calculators (`CALC_24`-`CALC_30`) in
+  `calculators/category_04_plate_discipline.py`, with source fetchers in
+  `calculators/sources/category_04_plate_discipline.py`. Statcast pitch-level at the existing
+  pybaseball pin, no new dependency and no new endpoint. Every calculator is two-sided and
+  emits two keys, the hitter's rate and the pitcher rate that pairs with it, following the
+  `CALC_16`/`CALC_16_USAGE` precedent rather than multiplying two unrelated rates together.
+- `OUT_EVENTS` and `ON_BASE_EVENTS` in `calculators/common.py`, enumerated explicitly in both
+  directions rather than one set plus a complement rule. Statcast ends plate appearances on
+  values that do not resolve the batter at all (`truncated_pa`, `caught_stealing_2b`,
+  `pickoff_1b`), and a complement would score every one of them as a pitcher out, which is
+  the same silent-negative shape as the `CALC_14` defect in issue #37. An event in neither
+  set is dropped from numerator and denominator. Verified against the probe frames: 774 of
+  774 plate appearances classified, zero residue.
+- Swing, whiff, contact, and unthrown-pitch description vocabularies. A `foul_tip` counts as
+  contact, not a whiff, matching Savant and the rule that makes a caught foul tip a strikeout.
+  Pitch-timer violations (`automatic_ball`) are excluded from `CALC_28` by name, since the
+  batter had nothing to swing at and the pitcher threw nothing to locate; 4 of the probe
+  frames' 17 landed on `pitch_number == 1`, squarely inside that calculator's population.
+- `zone_code`, which coerces Statcast's `zone` to an int before testing it against the code
+  sets. pandas widens the column to float64 to hold nulls and the cache's CSV round-trip
+  preserves that, so an uncoerced `5.0 in IN_ZONE_CODES` would match nothing and silently
+  empty every zone-based rate in the category.
+- `CALC_30_COVERAGE`, weighted by the starter's own location distribution rather than counted
+  as covered-zones-over-nine. `CALC_30` renormalizes its weighted xBA over the zones where the
+  hitter has a batted-ball sample, which is what keeps it on a batting-average scale but also
+  makes a partial heatmap look like a full one; coverage is the honest statement of how much
+  of the starter's real distribution the average represents.
+
+### Changed
+- `_terminal_pitch_by_pa` moved from `calculators/category_03_pitch_arsenal.py` to
+  `calculators/common.py` as the public `terminal_pitch_by_pa`, now that a second category
+  needs it. Two copies would eventually disagree, which is the same reason `HIT_EVENTS` was
+  promoted on 2026-08-08. Category 3's behavior is unchanged.
+
+### Verified
+- 711 tests passing, ruff format and check clean, zero live network escapes from the suite.
+- Smoke test against real cached Statcast frames for one hitter and one starter: all 14 keys
+  populated, every value independently reproduced from raw pandas, and the zone and out-of-
+  zone rates summing to exactly 1.0.
+- `main.py` byte-identical, `grep -c calculators main.py` returns 0. Nothing in the package is
+  called during a daily run.
+
+### Known caveats
+- `CALC_29`'s two-strike contact rate runs above the same hitter's overall contact rate (.764
+  against .694 on the smoke-test hitter). This is structural, not a defect: every foul with
+  two strikes keeps the plate appearance alive at two strikes, so the denominator is
+  self-weighted toward hitters who battle. Documented at the calculator.
+- Per-zone xBA samples are thin, 5 to 25 batted balls per zone over a regular hitter's full
+  season, which makes shrinkage (#34) matter more for `CALC_30` than almost anywhere else in
+  the model.
+
+---
+
 ## 2026-08-08
 
 ### Added

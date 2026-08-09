@@ -143,18 +143,20 @@ calculator sits with the others that share its data source:
 ```
 calculators/
     __init__.py                          # public surface
-    common.py                            # Window, roles, Rate, counting-stat and hit-event helpers
+    common.py                            # Window, roles, Rate, counting-stat and event-outcome helpers
     baselines.py                         # loaders for generated league-reference data
     data/                                # generated reference data, checked in
     category_01_bvp_matchups.py          # CALC_01-08
     category_02_platoon_splits.py        # CALC_09-15
     category_03_pitch_arsenal.py         # CALC_16-23
+    category_04_plate_discipline.py      # CALC_24-30
     category_06_lineup_game_context.py   # CALC_41
     sources/                             # the only package here that touches the network
         common.py                        #   HTTP + Statcast response cache
         category_01_bvp_matchups.py
         category_02_platoon_splits.py
         category_03_pitch_arsenal.py
+        category_04_plate_discipline.py
 tests/                                   # mirrors the module layout, one file per module
 scripts/                                 # on-demand generators, never run by the tool
 ```
@@ -379,6 +381,55 @@ measures arsenal mix rather than delivery.
 
 `pfx_x` is in feet; Baseball Savant displays the same quantity in inches. The constant is
 named `EXTREME_PFX_X_FEET` so the 12× error has somewhere to fail loudly.
+
+### Plate discipline and zone location calculators
+
+`category_04_plate_discipline.py` implements Category 4 (`CALC_24`-`CALC_30`), also entirely
+from Statcast pitch-level columns and also two-sided. Every calculator emits two keys, the
+hitter's rate and the pitcher rate that pairs with it, for the same reason Category 3 does.
+
+| Calculator | Hitter key | Pitcher key |
+|---|---|---|
+| `CALC_24` | zone-contact rate, contact per in-zone swing | `_ZONE_RATE`: share of tracked pitches in the zone |
+| `CALC_25` | chase rate, swings per out-of-zone pitch seen | `_OZONE_RATE`: share of tracked pitches out of the zone |
+| `CALC_26` | whiff rate, per swing | `_SWSTR`: swinging strikes, per pitch |
+| `CALC_27` | called-strike-plus-whiff rate allowed, per pitch | `_PITCHER_CSW`: the same rate generated |
+| `CALC_28` | 0-0 swing rate | `_F_STRIKE`: first-pitch strike rate |
+| `CALC_29` | two-strike contact rate, per swing | `_PITCHER_OUT`: outs per plate appearance reaching two strikes |
+| `CALC_30` | zone xBA weighted by where the starter works (`PROBABILITY`) | `_COVERAGE`: share of his in-zone pitches the hitter has a sample for |
+
+Four things to know before reading the numbers.
+
+**Almost everything here is tagged `MULTIPLIER`, and that tag is narrower than it looks.**
+These are skill rates, not batting averages: a .28 chase rate, a .25 whiff rate, and an .85
+zone-contact rate live on three different scales, and two of the three are bad news for the
+hitter while the third is good. `MULTIPLIER` is the available role meaning "not p_hit-scale,
+do not blend directly", which is the property that matters at the call site. Nothing should
+multiply `p_hit` by one of these until issue #39 settles the mapping. `CALC_30` is the
+category's only `PROBABILITY`, because a location-weighted xBA genuinely is on that scale.
+
+**Zone comes from Statcast's own `zone` column, not from coordinates.** Codes 1-9 are the
+3x3 in-zone grid `CALC_30` asks for and 11-14 the out-of-zone quadrants (there is no 10).
+Reconstructing in-zone from `plate_x` against half the plate width disagreed with the
+published zone on 4.3% of tracked pitches, because the published version accounts for the
+ball's radius and a per-batter zone. `plate_x`, `plate_z`, `sz_top`, and `sz_bot` are
+deliberately absent from the field tuple.
+
+**`CALC_29`'s out rate enumerates outcomes in both directions.** A plate appearance whose
+terminal event is in neither `OUT_EVENTS` nor `ON_BASE_EVENTS` is dropped from numerator and
+denominator, rather than falling through a "not on base means out" complement. Statcast ends
+plate appearances on `truncated_pa` and `caught_stealing_2b`, and a complement rule would
+score every one of those as a pitcher success. That is the same silent-negative shape as the
+`CALC_14` defect in issue #37, which is also why `CALC_29`'s pitcher side reduces to the
+terminal pitch before filtering on the count.
+
+**Two denominators that look wrong and are not.** `CALC_26` is per swing on the hitter's side
+and per pitch on the pitcher's, which is the ROADMAP's definition and the industry
+convention: swinging-strike rate credits a pitcher for provoking the swing at all. And
+`CALC_29`'s two-strike contact rate runs *above* the same hitter's overall contact rate
+(.764 against .694 on the smoke-test hitter) because every foul with two strikes keeps the
+plate appearance alive at two strikes, so a hitter who battles contributes many contacts and
+no whiffs.
 
 ### Lineup spot and CALC_41
 
