@@ -398,6 +398,100 @@ _OUTS = {
 }
 
 
+# ---- Category 5 ballpark / environment builders ----
+
+
+def _hc_for_angle(angle_degrees, radius=150.0):
+    """``(hc_x, hc_y)`` for a batted ball at *angle_degrees* off dead centre.
+
+    The inverse of `spray_angle`, so a fixture can name the sector it means
+    instead of hand-picking coordinates whose angle has to be recomputed by the
+    reader. Negative is left field. *radius* only has to be non-zero; the angle
+    is scale-free.
+    """
+    import math
+
+    from calculators.category_05_ballpark_environment import HOME_PLATE_HC
+
+    origin_x, origin_y = HOME_PLATE_HC
+    radians = math.radians(angle_degrees)
+    return origin_x + radius * math.sin(radians), origin_y - radius * math.cos(radians)
+
+
+def _env_pitch(
+    game_date="2026-07-01",
+    game_pk=1,
+    game_type="R",
+    at_bat_number=1,
+    pitch_number=1,
+    events=None,
+    description="ball",
+    bb_type=None,
+    angle=None,
+    hc_x=None,
+    hc_y=None,
+    home_team="NYY",
+    away_team="BOS",
+):
+    """Build one Category 5 pitch record.
+
+    Pass *angle* to place a batted ball in a named sector; the coordinates are
+    solved from it. Pass *hc_x* / *hc_y* directly only when testing the
+    coordinate handling itself, including the untracked case where both are None.
+    """
+    if angle is not None:
+        hc_x, hc_y = _hc_for_angle(angle)
+    return {
+        "game_date": game_date,
+        "game_pk": game_pk,
+        "game_type": game_type,
+        "at_bat_number": at_bat_number,
+        "pitch_number": pitch_number,
+        "events": events,
+        "description": description,
+        "bb_type": bb_type,
+        "hc_x": hc_x,
+        "hc_y": hc_y,
+        "home_team": home_team,
+        "away_team": away_team,
+    }
+
+
+def _air_ball(angle, events="field_out", **kwargs):
+    """A batted ball hit into the air at *angle*, the fixture `CALC_33` needs."""
+    kwargs.setdefault("bb_type", "fly_ball")
+    kwargs.setdefault("at_bat_number", abs(hash((angle, events))) % 100000)
+    return _env_pitch(angle=angle, description="hit_into_play", events=events, **kwargs)
+
+
+def _ballpark(fences=(330, 385, 405, 385, 330), roof="Open", elevation=100):
+    return {
+        "name": "Test Park",
+        "elevation_ft": elevation,
+        "azimuth_degrees": 90.0,
+        "roof_type": roof,
+        "turf_type": "Grass",
+        "fences_ft": list(fences),
+    }
+
+
+def _park_factor(all_index=100, left=100, right=100, closed=None, n_pa=50000):
+    """A one-venue park-factor table entry.
+
+    *closed* is ``(index, n_pa)`` for the roof-closed grouping, omitted entirely
+    when None so an open-air park has no such grouping, matching the real table.
+    """
+    groupings = {
+        "All": {"n_pa": n_pa, "index_hits": all_index},
+        "L": {"n_pa": n_pa // 2, "index_hits": left},
+        "R": {"n_pa": n_pa // 2, "index_hits": right},
+    }
+    if closed is not None:
+        closed_index, closed_pa = closed
+        groupings["roof_closed"] = {"n_pa": closed_pa, "index_hits": closed_index}
+    return {"name": "Test Park", "groupings": groupings}
+
+
 # ---- pybaseball stub (shared by source tests) ----
 
 

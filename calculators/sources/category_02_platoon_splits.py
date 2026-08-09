@@ -95,6 +95,11 @@ def fetch_handedness(
 # ---------------------------------------------------------------------------
 
 
+# The platoon split codes Category 2 reads. Other categories pass their own set
+# to `fetch_stat_splits`; see `_parse_stat_splits`.
+PLATOON_SIT_CODES = ("vl", "vr")
+
+
 def empty_stat_splits() -> dict[str, dict[str, int]]:
     """What a failed or absent statSplits lookup normalizes to."""
     return {}
@@ -103,15 +108,23 @@ def empty_stat_splits() -> dict[str, dict[str, int]]:
 def _parse_stat_splits(
     payload: dict,
     group: Literal["hitting", "pitching"],
+    codes: tuple[str, ...] = PLATOON_SIT_CODES,
 ) -> dict[str, dict[str, int]]:
     """Normalize a raw stats=statSplits API response into {code: COUNTING_STATS line}.
 
     *group* is ``'hitting'`` or ``'pitching'``. When *group* is ``'pitching'``,
     the split's ``battersFaced`` value is used as ``plateAppearances`` because
     the pitching stat group carries no ``plateAppearances`` key (verified on
-    Wheeler: battersFaced=261, atBats=236, plateAppearances=None, 2026-08-08).
-    Without this substitution ``rate_or_none`` would receive a zero denominator
-    and return None for every pitcher.
+    Wheeler: battersFaced=261, atBats=236, plateAppearances=None, 2026-08-08;
+    re-confirmed on Skubal across the h/a/d/n codes, 2026-08-09). Without this
+    substitution ``rate_or_none`` would receive a zero denominator and return
+    None for every pitcher.
+
+    *codes* is the set of split codes to keep, defaulting to Category 2's
+    platoon pair. It is a parameter rather than a constant because Category 5
+    reads the same endpoint for the ``h``/``a``/``d``/``n`` situational codes
+    (`CALC_37`, `CALC_38`) and needs this exact `battersFaced` normalization; a
+    second copy of this function would eventually disagree with this one.
 
     Malformed or empty input normalizes to ``{}`` rather than raising, matching
     the defensive style of ``parse_bvp_stats``.
@@ -120,7 +133,7 @@ def _parse_stat_splits(
     for stat_group in payload.get("stats") or []:
         for split in stat_group.get("splits") or []:
             code = (split.get("split") or {}).get("code")
-            if code not in ("vl", "vr"):
+            if code not in codes:
                 continue
             stat = split.get("stat") or {}
             line: dict[str, int] = {}
@@ -139,14 +152,19 @@ def fetch_stat_splits(
     player_id: int,
     group: Literal["hitting", "pitching"],
     season: int,
+    codes: tuple[str, ...] = PLATOON_SIT_CODES,
 ) -> dict[str, dict[str, int]]:
-    """Return vl/vr statSplits for *player_id* in *season* for the given stat *group*.
+    """Return statSplits for *player_id* in *season* for the given stat *group*.
 
-    Issues one GET /people/{player_id}/stats?stats=statSplits&sitCodes=vl,vr.
-    The returned mapping is keyed by split code:
+    Issues one GET /people/{player_id}/stats?stats=statSplits&sitCodes=... and
+    returns a mapping keyed by split code. With the default *codes*:
 
     - ``'vl'``: for a hitter, vs Left-Handed Pitchers; for a pitcher, vs Left-Handed Batters
     - ``'vr'``: for a hitter, vs Right-Handed Pitchers; for a pitcher, vs Right-Handed Batters
+
+    Category 5 passes ``("h", "a", "d", "n")`` for home / away / day / night.
+    Every requested code costs nothing extra: the endpoint returns them all in
+    one response.
 
     Note: ``sitCodes`` and date ranges cannot be combined on the MLB Stats API —
     this fetcher is season-scoped only. Recency windows (e.g. DAYS(14)) require
@@ -161,7 +179,7 @@ def fetch_stat_splits(
             params={
                 "stats": "statSplits",
                 "group": group,
-                "sitCodes": "vl,vr",
+                "sitCodes": ",".join(codes),
                 "season": season,
             },
             timeout=15,
@@ -170,7 +188,7 @@ def fetch_stat_splits(
     except requests.RequestException as exc:
         print(f"statSplits fetch error for player {player_id} ({exc})")
         return empty_stat_splits()
-    return _parse_stat_splits(resp.json(), group)
+    return _parse_stat_splits(resp.json(), group, codes)
 
 
 # ---------------------------------------------------------------------------
