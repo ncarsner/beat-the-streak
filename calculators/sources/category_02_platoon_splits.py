@@ -4,17 +4,33 @@
 of player ids and returns batSide.code / pitchHand.code for each, so a
 single network call covers an entire lineup rather than one call per player.
 
-The response envelope is {"people": [...]}, the standard MLB Stats API shape
-for the /people endpoint (same envelope as /people/{id}). This was verified
-against the live API on 2026-08-08.
+`fetch_stat_splits` issues one GET /people/{id}/stats?stats=statSplits&sitCodes=vl,vr
+for a player and season, returning vl/vr splits keyed by code as COUNTING_STATS
+lines. For a hitter, 'vl' means vs Left-Handed Pitchers; for a pitcher, 'vl'
+means vs Left-Handed Batters. Because date ranges and sitCodes cannot be
+combined on the MLB Stats API (verified 2026-08-08: byDateRange honored the
+window but dropped the split code=None, while statSplits honored the split
+but returned full-season data regardless of byDateRange), this fetcher is
+season-scoped only. A DAYS(14) window requires Statcast (see CALC_10/CALC_12).
+
+For the pitching group, `battersFaced` is mapped onto `plateAppearances` at the
+source boundary so both groups yield the same COUNTING_STATS line shape. Without
+this normalization CALC_11 would silently return None for every pitcher (verified
+on Wheeler: battersFaced=261, atBats=236, plateAppearances=None, 2026-08-08).
+
+The /people response envelope is {"people": [...]}, the standard MLB Stats API
+shape for the /people endpoint (same envelope as /people/{id}). This was
+verified against the live API on 2026-08-08.
 """
 
 from __future__ import annotations
 
 from collections.abc import Collection
+from typing import Literal
 
 import requests
 
+from calculators.common import COUNTING_STATS
 from mlb_api import MLB_API_BASE
 
 
@@ -64,3 +80,86 @@ def fetch_handedness(
         }
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# statSplits fetcher — vl/vr season splits for hitting or pitching
+# ---------------------------------------------------------------------------
+
+
+def empty_stat_splits() -> dict[str, dict[str, int]]:
+    """What a failed or absent statSplits lookup normalizes to."""
+    return {}
+
+
+def _parse_stat_splits(
+    payload: dict,
+    group: Literal["hitting", "pitching"],
+) -> dict[str, dict[str, int]]:
+    """Normalize a raw stats=statSplits API response into {code: COUNTING_STATS line}.
+
+    *group* is ``'hitting'`` or ``'pitching'``. When *group* is ``'pitching'``,
+    the split's ``battersFaced`` value is used as ``plateAppearances`` because
+    the pitching stat group carries no ``plateAppearances`` key (verified on
+    Wheeler: battersFaced=261, atBats=236, plateAppearances=None, 2026-08-08).
+    Without this substitution ``rate_or_none`` would receive a zero denominator
+    and return None for every pitcher.
+
+    Malformed or empty input normalizes to ``{}`` rather than raising, matching
+    the defensive style of ``parse_bvp_stats``.
+    """
+    result: dict[str, dict[str, int]] = {}
+    for stat_group in payload.get("stats") or []:
+        for split in stat_group.get("splits") or []:
+            code = (split.get("split") or {}).get("code")
+            if code not in ("vl", "vr"):
+                continue
+            stat = split.get("stat") or {}
+            line: dict[str, int] = {}
+            for field in COUNTING_STATS:
+                if field == "plateAppearances" and group == "pitching":
+                    # Pitching splits carry battersFaced, not plateAppearances.
+                    val = stat.get("battersFaced", stat.get("plateAppearances", 0))
+                else:
+                    val = stat.get(field, 0)
+                line[field] = val or 0
+            result[code] = line
+    return result
+
+
+def fetch_stat_splits(
+    player_id: int,
+    group: Literal["hitting", "pitching"],
+    season: int,
+) -> dict[str, dict[str, int]]:
+    """Return vl/vr statSplits for *player_id* in *season* for the given stat *group*.
+
+    Issues one GET /people/{player_id}/stats?stats=statSplits&sitCodes=vl,vr.
+    The returned mapping is keyed by split code:
+
+    - ``'vl'``: for a hitter, vs Left-Handed Pitchers; for a pitcher, vs Left-Handed Batters
+    - ``'vr'``: for a hitter, vs Right-Handed Pitchers; for a pitcher, vs Right-Handed Batters
+
+    Note: ``sitCodes`` and date ranges cannot be combined on the MLB Stats API —
+    this fetcher is season-scoped only. Recency windows (e.g. DAYS(14)) require
+    Statcast pitch-level data; see CALC_10 / CALC_12.
+
+    Returns an empty mapping on request failure rather than raising, matching the
+    error contract of ``fetch_bvp_stats``.
+    """
+    try:
+        resp = requests.get(
+            f"{MLB_API_BASE}/people/{player_id}/stats",
+            params={
+                "stats": "statSplits",
+                "group": group,
+                "sitCodes": "vl,vr",
+                "season": season,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"statSplits fetch error for player {player_id} ({exc})")
+        return empty_stat_splits()
+    return _parse_stat_splits(resp.json(), group)
