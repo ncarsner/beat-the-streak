@@ -5,6 +5,65 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-09 (Category 9)
+
+### Added
+- Category 9 pitcher trending-form calculators (`CALC_60`-`CALC_65`) in
+  `calculators/category_09_pitcher_form.py`, with the source fetcher in
+  `calculators/sources/category_09_pitcher_form.py`. The pitcher-side mirror of Category 8,
+  single-sided, inheriting its spring-training filter and `today` parameter. Windows are
+  counted in **starts**, so nothing here routes through `apply_window`.
+- Start reconstruction. Statcast publishes no starter/reliever flag anywhere, so a start is
+  identified as "the pitcher's earliest plate appearance came in inning 1 with zero outs",
+  which held for 19 of 19 games in the probe frame. An opener classifies as a start, which is
+  the honest reading. Relief appearances are dropped: every Category 9 calculator is about the
+  starter a hitter is scheduled to face.
+- Innings-pitched reconstruction, and **not by counting outs from plate-appearance events**.
+  That undercounts, because a baserunner retired on a batted ball is an out the batter's event
+  does not name: 2 of 104 probe half-innings came up one out short. The rule used instead
+  leans on game state, since every half-inning the pitcher appears in except his last must
+  have ended with him on the mound and therefore contributed exactly `3 - outs_when_up` outs.
+  Only the final half-inning falls back to the event map, making innings pitched exact except
+  there, where it is a lower bound.
+- `CALC_60` uses Tom Tango's Game Score v2 rather than Bill James's original, which splits
+  earned from unearned runs where Statcast attaches no scoring decision to a run. Calibration
+  is left unclaimed: v2 is designed to sit on roughly v1's scale, but this repo has no league
+  sample to check that against with the bulk pull broken at the pin (#38).
+- Runs allowed measured per half-inning across all pitch rows rather than by summing terminal
+  pitches, since a run can score on a non-terminal pitch (wild pitch, balk, steal of home) and
+  that cost one run in 1 of the probe frame's 19 starts.
+
+### Changed
+- Fourth promotion to `calculators/common.py`: the `pitch_type` groupings
+  (`FASTBALL_TYPES`/`BREAKING_TYPES`/`OFFSPEED_TYPES`, `pitch_class`) from Category 3, and the
+  zone vocabulary (`IN_ZONE_CODES`/`OUT_OF_ZONE_CODES`, `zone_code`, `is_in_zone`,
+  `is_out_of_zone`) from Category 4, now that Category 9 reads both. Moved verbatim, including
+  `zone_code`'s integrality check and its numpy-duck-typing rationale, so the fix from earlier
+  today is not lost to a retype. The measured tier constants stay in Category 3, since those
+  describe one category rather than shared vocabulary. No behavior change.
+
+### Known caveats
+- **Runs allowed carry a non-random undercount.** A run charged to the starter that scores
+  after he leaves, driven home by a reliever, never appears in his pitch rows and no available
+  signal recovers it. That biases `CALC_60` upward on precisely the starts where he was pulled
+  with runners aboard, which is to say on his worst ones.
+- `CALC_64`'s denominator is **not a sample size**, unlike every other `Rate` in the model.
+  Rest is a single scalar read off one date, so there is nothing to average and nothing to
+  shrink; it is set to 1 to satisfy the shape and must not be read as evidence weight.
+- The start test would misclassify a reliever who entered to begin the first inning, which
+  requires the starter to face nobody at all.
+
+### Verified
+- 876 tests passing, ruff format and check clean, zero live network escapes from the suite.
+- Smoke test against a real Statcast frame, with every value independently reproduced from raw
+  pandas by a separate script: `CALC_60 = 40.0` (Game Scores 35 and 45), `CALC_61` 8.3455
+  hits per nine and 1.2545 WHIP over 18.333 innings, `CALC_62 = -0.6206` mph,
+  `CALC_63 = +0.0075` walk delta, `CALC_63_ZONE_DELTA = +0.0222`,
+  `CALC_63_MEATBALL = 0.0614`, `CALC_64 = 4` days, `CALC_65 = 0.4865`.
+- `main.py` byte-identical. Nothing in the package is called during a daily run.
+
+---
+
 ## 2026-08-09 (later)
 
 ### Added

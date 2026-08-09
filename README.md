@@ -143,7 +143,7 @@ calculator sits with the others that share its data source:
 ```
 calculators/
     __init__.py                          # public surface
-    common.py                            # Window, roles, Rate, counting-stat and event-outcome helpers
+    common.py                            # Window, roles, Rate, and the shared Statcast vocabulary
     baselines.py                         # loaders for generated league-reference data
     data/                                # generated reference data, checked in
     category_01_bvp_matchups.py          # CALC_01-08
@@ -152,6 +152,7 @@ calculators/
     category_04_plate_discipline.py      # CALC_24-30
     category_06_lineup_game_context.py   # CALC_41
     category_08_batter_form.py           # CALC_52-59
+    category_09_pitcher_form.py          # CALC_60-65
     sources/                             # the only package here that touches the network
         common.py                        #   HTTP + Statcast response cache
         category_01_bvp_matchups.py
@@ -159,6 +160,7 @@ calculators/
         category_03_pitch_arsenal.py
         category_04_plate_discipline.py
         category_08_batter_form.py
+        category_09_pitcher_form.py
 tests/                                   # mirrors the module layout, one file per module
 scripts/                                 # on-demand generators, never run by the tool
 ```
@@ -486,6 +488,64 @@ hard-hit rate, sweet-spot rate, xwOBA, and BABIP are `MULTIPLIER`. Category 1 ta
 hard-hit rate and xwOBA `PROBABILITY` "for uniformity" with a docstring warning instead; the
 two conventions disagree, and Category 1's puts a .56 hard-hit rate and a .21 hit rate under
 the same tag.
+
+### Pitcher form and fatigue calculators
+
+`category_09_pitcher_form.py` implements Category 9 (`CALC_60`-`CALC_65`), the pitcher-side
+mirror of Category 8 and single-sided for the same reason. It inherits Category 8's
+spring-training filter and `today` parameter, and adds one structural idea of its own:
+**windows are counted in starts**, not days or games. Nothing here routes through
+`apply_window`, which has no start-shaped window and could not easily gain one, because
+identifying a start is a reconstruction rather than a filter.
+
+| Calculator | Value | Window |
+|---|---|---|
+| `CALC_60` | mean Game Score v2 (`DELTA`, points) | last 2 starts |
+| `CALC_61` | `_HITS_PER_9` and `_WHIP` | last 3 starts |
+| `CALC_62` | fastball velocity minus season average (`DELTA`, mph) | last start vs. season |
+| `CALC_63` | walk-rate delta, plus `_ZONE_DELTA` and `_MEATBALL` | last 3 starts vs. season |
+| `CALC_64` | days since the last start (`DELTA`, days) | anchored to `today` |
+| `CALC_65` | hard-hit rate allowed | last 2 starts |
+
+**Two things Statcast does not publish, both reconstructed here.**
+
+*A start.* There is no starter/reliever flag anywhere in the feed. The test used is that the
+pitcher's earliest plate appearance in the game came in inning 1 with zero outs recorded,
+which held for 19 of 19 games in the probe frame. It classifies an opener as a start, which
+is the honest reading, and would misclassify a reliever who entered to begin the first
+inning, which requires the starter to face nobody at all.
+
+*Innings pitched.* The obvious approach, counting outs from plate-appearance `events`,
+**undercounts**: a baserunner retired on a batted ball is an out that the batter's event does
+not name, and that cost one out in 2 of 104 probe half-innings. The rule used instead leans
+on game state. Within a start, every half-inning the pitcher appears in *except his last*
+must have ended with him on the mound, so it contributed exactly `3 - outs_when_up` outs.
+Only the final half-inning is ambiguous and falls back to the event map, so innings pitched
+is exact except possibly there, where it is a lower bound. A lower bound on the denominator
+makes `CALC_61` an upper bound, which is the safer direction for a statistic that flags a
+struggling starter.
+
+**Game Score v2, not Bill James's original.** v1 splits earned from unearned runs and
+Statcast attaches no scoring decision to a run, so it is unreachable. Tom Tango's v2 is
+`40 + 2*outs + K - 2*BB - 2*H - 3*R - 6*HR`, every term of which is available. Calibration is
+left unclaimed: v2 is designed to sit on roughly v1's scale, but this repo has no league
+sample to check that against, since the bulk `pybaseball.statcast()` pull is broken at the
+pinned version (#38).
+
+**Runs allowed carry a known, non-random undercount.** They are measured per half-inning as
+the batting team's score at the end minus its score at the start, across all his pitch rows
+rather than the terminal pitch of each plate appearance, because a run can score on a
+non-terminal pitch (a wild pitch, a balk, a steal of home) and that cost one run in 1 of 19
+probe starts. What no available signal fixes is a run charged to him that scores after he
+leaves, driven home by a reliever. That biases `CALC_60` *upward* on exactly the starts where
+he was pulled with runners aboard, which is to say on his worst ones.
+
+Two smaller notes. `CALC_62` is signed and **negative is the interesting direction**: the
+ROADMAP calls out a loss of 1.5 mph or more as a hit boost, so reading magnitude alone would
+treat a velocity spike as a red flag. And `CALC_64`'s denominator is not a sample size, unlike
+every other `Rate` in the model: rest is a single scalar read off one date, so there is
+nothing to average and nothing to shrink. It is set to 1 to satisfy the shape and must not be
+read as evidence weight.
 
 ### Lineup spot and CALC_41
 
