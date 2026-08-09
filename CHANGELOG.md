@@ -5,6 +5,103 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-09 (Category 5)
+
+### Added
+- Category 5 ballpark and environment calculators (`CALC_31`-`CALC_40`) in
+  `calculators/category_05_ballpark_environment.py`, with the source fetchers in
+  `calculators/sources/category_05_ballpark_environment.py`. The first **game-level**
+  category: a park factor, an air density and a wind reading are properties of the game,
+  identical for all eighteen hitters in it, so those calculators take an environment record
+  rather than a player id. Only `CALC_33`, `CALC_37`, `CALC_38` and `CALC_40` are conditioned
+  on the hitter.
+- Two checked-in reference tables and their generators, following the
+  `league_platoon_baseline.json` precedent, with loaders in `calculators/baselines.py`.
+  `calculators/data/ballparks.json` (from `scripts/generate_ballparks.py`) holds elevation,
+  roof type, surface and the five published fence distances for all 30 venues;
+  `calculators/data/park_factors.json` (from `scripts/generate_park_factors.py`) holds
+  Statcast's 3-year rolling park-factor indexes, all-batters and split by batter hand, plus
+  the roof-closed grouping.
+- Situational splits for `CALC_37` and `CALC_38` via `sitCodes=h,a,d,n`, one request per
+  player covering both calculators. `fetch_stat_splits` is generalized to take its situation
+  codes rather than hardcoding `vl,vr`, so Category 5 reuses it rather than copying it. That
+  matters beyond tidiness: it already maps a pitching split's `battersFaced` onto
+  `plateAppearances`, without which both calculators would return None for every pitcher.
+
+### Notes
+- **A deliberate, scoped exception to the 2026-07-11 move off scraping.** The MLB Stats API
+  publishes no park factors and pybaseball 2.0.0 exposes no park-factor function (its `parks`
+  and `park_codes` are Retrosheet identifiers), so the alternative was shipping `CALC_31`,
+  `CALC_32` and `CALC_39` as permanent `None`. The exception is narrowed three ways: the read
+  lives in `scripts/`, which never runs during a daily run or a test; its output is a
+  checked-in JSON file, so no code path a run touches carries a scraper; and it parses an
+  embedded JSON array rather than markup, raising on a page change instead of silently writing
+  an empty table that every calculator would read as "every park is neutral".
+- **The park-factor window moves.** It is 3-year rolling and includes the in-progress season
+  (`year_range` "2024-2026"), so the file is a snapshot of a moving quantity rather than an
+  annual constant. It carries `generated` and `year_range` so a stale table is detectable.
+- **Savant's `venue_id` is the MLB venue id**, verified across the 29 venues the two tables
+  share with zero name mismatches, and its roof-closed grouping covers exactly the 8 venues
+  the Stats API reports as non-Open. Both cross-checks are asserted as tests, since they join
+  two independently generated files. Savant carried 29 of 30 venues; Sutter Health Park has
+  too little history for a three-year window, so `CALC_31` and `CALC_32` are None there.
+- **Spray angle is solved from `hc_x`/`hc_y`, and the sign was validated in both directions
+  before anything depended on it.** Statcast publishes no angle column, and a flipped sign
+  turns every pull into an oppo while leaving the output entirely plausible, the same failure
+  class as `delta_run_exp`'s perspective in Category 3. Negative is left field: a right-handed
+  hitter distributed LF 62 / CF 42 / RF 34 and an extreme left-handed pull hitter LF 34 /
+  CF 62 / RF 132. Angles outside fair territory are dropped rather than clamped (5 of 143 and
+  15 of 243 batted balls, of which 15 of those 20 were popups or ground balls, where the
+  landing point sits a few feet from the plate and the angle is numerically unstable).
+- **`CALC_39` solves for the open-roof index rather than dividing by the all-conditions
+  blend.** Savant publishes no working roof-open grouping, but the closed share is exactly
+  closed `n_pa` over all `n_pa`, which makes `A = f*C + (1 - f)*O` invertible. The naive ratio
+  is attenuated because `A` already contains the closed games: American Family Field reads
+  .979 against the blend and .957 against the solved open index. Below a 15 percent open share
+  the inversion is abandoned, since half a point of rounding error on an integer index becomes
+  3.3 points there and 135 at Daikin Park's measured 0.4 percent. An open-air park and a fixed
+  dome both return exactly 1.0, by definition rather than as an invented neutral.
+- **The roof effect on base hits is small, and that is a finding.** Across the seven
+  retractable parks the closed-roof hit index sat within two points of the all-conditions
+  index, equal at the published integer resolution for three of them.
+- **`CALC_34` and `CALC_35` report physics, not invented league constants.** The ROADMAP asks
+  for a "temperature modifier" and an "index", but the map from air density to hit probability
+  is a league-wide measurement #38 blocks. So they report degrees off the neutral band and a
+  dry-air density ratio from the barometric formula and the ideal gas law, and #39 owns the
+  mapping into `p_hit`, following `CALC_62`'s precedent of reporting a velocity delta in raw
+  mph. Humidity is unavailable from the boxscore and is not guessed at; humid air is
+  marginally less dense, so the index slightly understates carry on muggy days.
+- **Weather and wind publish on a later clock than the lineup.** Of 8 Preview-state games
+  sampled on 2026-08-09, 2 carried `Weather` and `Wind` and 6 did not, and it did not track
+  start time (three games at the same 17:35Z first pitch split 1 populated, 2 not). So
+  `CALC_34`, `CALC_35`, `CALC_36` and `CALC_39` are fully usable for the backtest in #35, over
+  completed games where the fields are always present, and resolve to None more often than not
+  at live pick time. When wired in they need the `refresh_opposing_pitchers` treatment:
+  `queried_games_cache` freezes the first boxscore read for the rest of the day, so a field
+  published later would never be seen.
+- **Wind direction vocabulary enumerated in both directions**, from 78 games across five dates
+  spanning April to August. A crossfield or calm wind returns 0.0 mph, which is a measurement,
+  while an unrecognized direction returns None, so a vocabulary gap can never be mistaken for
+  a calm day. The spread between two hitters is narrower than it looks like it should be, and
+  that is physics: fair territory spans 90 degrees, so the cosine never falls below 0.31 and a
+  wind out to right field still pushes a ball hit to left field outward.
+- **Overlaps to resolve before blending.** `CALC_32` already contains `CALC_31`, and `CALC_35`
+  is computed from `CALC_34`'s temperature; using either pair together double-counts the same
+  adjustment. `CALC_34`, `CALC_35` and `CALC_39` carry a denominator of 1 that is **not** a
+  sample size, the same shape as `CALC_64`'s rest days, while `CALC_33` and `CALC_36` carry the
+  real tracked air-ball count.
+- **`CALC_33` is distance-only.** The venue endpoint publishes no wall heights, so Fenway
+  reads as a 310-foot left-field line with nothing to say the wall above it is 37 feet tall.
+  The sign of the quantity's effect on hit probability is also deliberately not decided here:
+  a shorter fence turns fly balls into home runs while a deeper outfield leaves more room for
+  a ball to fall in, and which dominates is another #38-blocked measurement.
+- Unwired as always: `main.py` byte-identical, no Category 5 request made during a run.
+  1082 tests passing, up from 877. `CALC_33`, `CALC_35`, `CALC_36` and `CALC_40` were each
+  independently reproduced from raw pandas and textbook formulas rather than only from the
+  code under test.
+
+---
+
 ## 2026-08-09 (Category 9)
 
 ### Added

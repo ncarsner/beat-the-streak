@@ -151,6 +151,7 @@ calculators/
     category_02_platoon_splits.py        # CALC_09-15
     category_03_pitch_arsenal.py         # CALC_16-23
     category_04_plate_discipline.py      # CALC_24-30
+    category_05_ballpark_environment.py  # CALC_31-40
     category_06_lineup_game_context.py   # CALC_41
     category_08_batter_form.py           # CALC_52-59
     category_09_pitcher_form.py          # CALC_60-65
@@ -160,6 +161,7 @@ calculators/
         category_02_platoon_splits.py
         category_03_pitch_arsenal.py
         category_04_plate_discipline.py
+        category_05_ballpark_environment.py
         category_08_batter_form.py
         category_09_pitcher_form.py
 tests/                                   # mirrors the module layout, one file per module
@@ -547,6 +549,78 @@ treat a velocity spike as a red flag. And `CALC_64`'s denominator is not a sampl
 every other `Rate` in the model: rest is a single scalar read off one date, so there is
 nothing to average and nothing to shrink. It is set to 1 to satisfy the shape and must not be
 read as evidence weight.
+
+### Ballpark and environment calculators
+
+`category_05_ballpark_environment.py` implements Category 5 (`CALC_31`-`CALC_40`) and is the
+**first game-level category**. A park factor, an air density, and a wind reading are
+properties of the game, identical for all eighteen hitters in it, so those calculators take an
+environment record rather than a player id. Only `CALC_33`, `CALC_37`, `CALC_38`, and
+`CALC_40` are conditioned on the hitter.
+
+| Calculator | Value | Source |
+|---|---|---|
+| `CALC_31` | park hit factor, 3-year rolling (`MULTIPLIER`) | `park_factors.json` |
+| `CALC_32` | same, split by batter hand (`MULTIPLIER`) | `park_factors.json` |
+| `CALC_33` | feet of fence distance vs. league mean, weighted by spray (`DELTA`) | Statcast + `ballparks.json` |
+| `CALC_34` | degrees off the neutral band, plus `_TIER` (`DELTA`) | boxscore `Weather` |
+| `CALC_35` | density-altitude index (`MULTIPLIER`) | `ballparks.json` + `Weather` |
+| `CALC_36` | assisting wind in mph, projected onto spray (`DELTA`) | boxscore `Wind` + Statcast |
+| `CALC_37` | `_BATTER` / `_PITCHER` hit rate in today's day-or-night condition | `statSplits` |
+| `CALC_38` | `_BATTER` / `_PITCHER` hit rate home or away | `statSplits` |
+| `CALC_39` | closed-roof factor vs. solved open-roof factor (`MULTIPLIER`) | `park_factors.json` |
+| `CALC_40` | hit rate at today's venue | Statcast `home_team` |
+
+**Two checked-in reference tables**, both generated on demand by `scripts/` and loaded through
+`calculators/baselines.py`. `ballparks.json` holds elevation, roof type, and the five
+published fence distances for all 30 venues; `CALC_33` needs a league mean per sector to say
+whether today's park is deep, so evaluating one venue requires all of them. `park_factors.json`
+holds Statcast's park-factor indexes, where 100 is neutral.
+
+The park-factor table is a **scoped exception to the move off scraping**. The Stats API
+publishes no park factors and pybaseball 2.0.0 exposes no park-factor function, so the
+alternative was shipping `CALC_31`, `CALC_32`, and `CALC_39` as permanent `None`. The read
+lives in `scripts/`, which never runs during a daily run or a test; its output is a checked-in
+file, so no code path a run touches carries a scraper. Its window is 3-year rolling and
+includes the in-progress season, so it is a snapshot of a moving quantity: regenerate
+periodically and read `year_range` before trusting it.
+
+**Spray angle is solved, and the sign was validated in both directions first.** Statcast
+publishes `hc_x` / `hc_y` but no angle. A flipped sign turns every pull into an oppo and
+leaves the output entirely plausible, which is the same failure class as `delta_run_exp`'s
+perspective in Category 3. Negative is left field: a right-handed hitter distributed LF 62 /
+CF 42 / RF 34 and an extreme left-handed pull hitter LF 34 / CF 62 / RF 132. Angles outside
+fair territory are dropped rather than clamped, since a popup landing a few feet from the
+plate solves to a wild angle.
+
+**`CALC_39` solves for the open-roof index instead of dividing by the blend.** Savant
+publishes no working roof-open grouping, but the closed share is exactly its `n_pa` over the
+all-conditions `n_pa`, which makes `A = f*C + (1 - f)*O` invertible. Dividing by `A` directly
+would attenuate the effect, because `A` already contains the closed games: American Family
+Field reads .979 against the blend and .957 against the solved open index. Below a 15 percent
+open share the inversion is abandoned, since half a point of rounding error on an integer
+index becomes 3.3 points there. An open-air park and a fixed dome both return exactly 1.0, by
+definition rather than as an invented neutral.
+
+**`CALC_34` and `CALC_35` report physics, not league constants.** The ROADMAP asks for a
+"temperature modifier" and an "index", but the map from air density to hit probability is a
+league-wide measurement this repo cannot currently make (#38). So they report degrees off
+neutral and a dry-air density ratio, and issue #39 owns the mapping, following `CALC_62`'s
+precedent of reporting a velocity delta in raw mph. Humidity is unavailable from the boxscore
+and is not guessed at; humid air is marginally less dense, so the index slightly understates
+carry on muggy days.
+
+**Weather and wind publish on a later clock than the lineup.** Of 8 Preview-state games
+sampled on 2026-08-09, 2 carried weather and 6 did not, and it did not track start time. So
+`CALC_34`, `CALC_35`, `CALC_36`, and `CALC_39` are fully usable for a backtest over completed
+games and resolve to `None` more often than not at live pick time. When this is wired in it
+needs the `refresh_opposing_pitchers` treatment: `queried_games_cache` freezes the first
+boxscore read for the rest of the day, so a field that publishes later would never be seen.
+
+Two overlaps to resolve before blending: `CALC_32` already contains `CALC_31`, and `CALC_35`
+is computed from `CALC_34`'s temperature. And `CALC_34`, `CALC_35`, and `CALC_39` carry a
+denominator of 1 that is **not** a sample size, the same shape as `CALC_64`'s rest days;
+`CALC_33` and `CALC_36` carry the real tracked air-ball count.
 
 ### Lineup spot and CALC_41
 
