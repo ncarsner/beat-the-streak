@@ -503,6 +503,77 @@ def _park_factor(all_index=100, left=100, right=100, closed=None, n_pa=50000):
     return {"name": "Test Park", "groupings": groupings}
 
 
+# ---- Category 6 lineup / times-through-order builders ----
+
+
+def _lineup_line(obp=".340", slg=".420", ops=".760", pa=400):
+    """One hitter's season rate line as the MLB Stats API serves it.
+
+    The three rates are **strings** on purpose: the API sends ".375", and a
+    fixture that hands over a float would not exercise the parse that every real
+    response goes through.
+    """
+    return {"obp": obp, "slg": slg, "ops": ops, "plateAppearances": pa}
+
+
+def _tto_pa(
+    game_pk=1,
+    at_bat_number=1,
+    pitch_number=1,
+    inning=1,
+    outs_when_up=0,
+    events="field_out",
+    batter=100,
+    pitcher=200,
+    game_type="R",
+    game_date="2026-07-01",
+):
+    """One Category 6 plate appearance, expressed as its terminal pitch.
+
+    Carries both the pitcher-side fields (`outs_when_up`, `batter`) and the
+    batter-side ones (`pitcher`), so a single fixture can be handed to either
+    reconstruction and the two can be compared over the same rows.
+    """
+    return {
+        "game_date": game_date,
+        "game_pk": game_pk,
+        "game_type": game_type,
+        "at_bat_number": at_bat_number,
+        "pitch_number": pitch_number,
+        "inning": inning,
+        "outs_when_up": outs_when_up,
+        "events": events,
+        "batter": batter,
+        "pitcher": pitcher,
+    }
+
+
+def _start_pas(game_pk=1, batters=(101, 102, 103), turns=3, events="field_out", **kw):
+    """A start as one-pitch plate appearances, *turns* times through *batters*.
+
+    The first plate appearance is inning 1 with nobody out, so the start test
+    recognises it. `at_bat_number` increases monotonically, which is the order
+    both reconstructions walk.
+    """
+    pas = []
+    number = 1
+    for turn in range(turns):
+        for batter in batters:
+            pas.append(
+                _tto_pa(
+                    game_pk=game_pk,
+                    at_bat_number=number,
+                    inning=turn + 1,
+                    outs_when_up=0 if number == 1 else 1,
+                    events=events,
+                    batter=batter,
+                    **kw,
+                )
+            )
+            number += 1
+    return pas
+
+
 # ---- pybaseball stub (shared by source tests) ----
 
 

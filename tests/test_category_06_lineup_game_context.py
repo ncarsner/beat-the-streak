@@ -60,6 +60,14 @@ def test_lookup_table_covers_exactly_the_nine_spots():
 
 
 def test_compute_category_06_returns_the_key_when_absent():
-    """An absent spot yields the key with None, not an empty dict."""
-    assert compute_category_06() == {"CALC_41": None}
-    assert set(compute_category_06(3)) == {"CALC_41"}
+    """An absent spot yields the key with None, not an omitted key.
+
+    Asserted on `CALC_41` alone rather than on the whole mapping. This test was
+    written when `CALC_41` was the only member of the category and pinned the
+    return value to exactly ``{"CALC_41": None}``; `CALC_42`-`CALC_46` landing
+    widened it legitimately, and the full key set is covered in
+    `tests/test_category_06_extended.py`. What matters here is unchanged: the key
+    is present and its value is None.
+    """
+    assert compute_category_06()["CALC_41"] is None
+    assert compute_category_06(3)["CALC_41"] is not None

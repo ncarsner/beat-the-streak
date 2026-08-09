@@ -21,6 +21,7 @@ LEAGUE_PLATOON_BASELINE_PATH = pathlib.Path(
 )
 BALLPARKS_PATH = pathlib.Path("calculators/data/ballparks.json")
 PARK_FACTORS_PATH = pathlib.Path("calculators/data/park_factors.json")
+LEAGUE_GAME_CONTEXT_PATH = pathlib.Path("calculators/data/league_game_context.json")
 
 # The four cells a complete platoon baseline must carry, as
 # "<batter hand>_vs_<pitcher hand>".
@@ -94,6 +95,34 @@ def load_ballparks(path: pathlib.Path | None = None) -> dict:
     314]}, ...}``. Regenerate with ``scripts/generate_ballparks.py``.
     """
     return _load_venue_table(path or BALLPARKS_PATH, "Ballpark table")
+
+
+def load_league_game_context(path: pathlib.Path | None = None) -> dict:
+    """Return the league game-context constants `CALC_45` measures against.
+
+    ``{"skipped_ninth": {"rate": .4429, "denominator": 1761, "skipped": 780},
+    "pa_lost_per_skipped_ninth": 0.5, ...}``. Regenerate with
+    ``scripts/generate_league_game_context.py``.
+
+    Unlike every other league-reference constant in this repo, this one is a
+    genuine league census rather than a convenience sample: it comes from the MLB
+    Stats API's schedule, so it does not inherit issue #38's broken bulk Statcast
+    pull.
+
+    A missing or malformed file returns ``{}``, and `CALC_45` then returns None
+    for a home hitter, which is the honest answer when the rate it scales by is
+    absent.
+    """
+    path = path or LEAGUE_GAME_CONTEXT_PATH
+    try:
+        document = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"League game context unavailable ({exc})")
+        return {}
+    if not isinstance(document, dict) or "skipped_ninth" not in document:
+        print("League game context malformed: no skipped_ninth")
+        return {}
+    return document
 
 
 def load_park_factors(path: pathlib.Path | None = None) -> dict:

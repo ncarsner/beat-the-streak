@@ -13,10 +13,12 @@ from calculators.baselines import (
     PARK_FACTORS_PATH,
     PLATOON_CELLS,
     load_ballparks,
+    load_league_game_context,
     load_league_platoon_baseline,
     load_park_factors,
 )
 from scripts.generate_league_platoon_baseline import aggregate_platoon_baseline
+from scripts.generate_league_game_context import skipped_ninth_rate
 from scripts.generate_park_factors import parse_leaderboard
 
 
@@ -265,3 +267,74 @@ def test_a_changed_page_raises_rather_than_writing_an_empty_table(page):
     calculator downstream. This is a generator run by hand, so it fails loudly."""
     with pytest.raises(ValueError):
         parse_leaderboard(page)
+
+
+# ---------------------------------------------------------------------------
+# load_league_game_context and its generator's counting rule
+# ---------------------------------------------------------------------------
+
+
+def test_the_checked_in_game_context_carries_a_measured_skip_rate():
+    """A genuine league census rather than a convenience sample, and from the
+    Stats API rather than the broken bulk Statcast pull, so unlike every other
+    league constant in this repo it does not inherit #38."""
+    context = load_league_game_context()
+    ninth = context["skipped_ninth"]
+    assert ninth["denominator"] > 1000
+    assert 0.3 < ninth["rate"] < 0.6
+    assert ninth["skipped"] == pytest.approx(
+        ninth["rate"] * ninth["denominator"], abs=1
+    )
+
+
+def test_the_game_context_carries_the_roadmaps_conditional_pa_loss():
+    assert load_league_game_context()["pa_lost_per_skipped_ninth"] == 0.5
+
+
+def test_a_missing_game_context_returns_empty(tmp_path, capsys):
+    assert load_league_game_context(tmp_path / "absent.json") == {}
+    assert "unavailable" in capsys.readouterr().out
+
+
+def test_a_game_context_without_the_ninth_key_returns_empty(tmp_path, capsys):
+    odd = tmp_path / "odd.json"
+    odd.write_text(json.dumps({"season": 2026}))
+    assert load_league_game_context(odd) == {}
+    assert "malformed" in capsys.readouterr().out
+
+
+def _game(state="Final", innings=9, home_ninth_runs=0):
+    scored = [{"home": {"runs": 0}, "away": {"runs": 0}} for _ in range(innings - 1)]
+    last = {"away": {"runs": 0}}
+    if home_ninth_runs is not None:
+        last["home"] = {"runs": home_ninth_runs}
+    return {
+        "status": {"abstractGameState": state},
+        "linescore": {"innings": scored + [last]},
+    }
+
+
+def test_a_home_ninth_that_was_never_played_is_counted_as_skipped():
+    """The signal is a home half-inning carrying no `runs` value at all."""
+    result = skipped_ninth_rate([_game(home_ninth_runs=None), _game()])
+    assert result == {"rate": 0.5, "denominator": 2, "skipped": 1}
+
+
+def test_a_shortened_game_is_excluded_rather_than_scored_as_skipped():
+    """A rain-shortened seven-inning game says nothing about the ninth."""
+    assert (
+        skipped_ninth_rate([_game(innings=7, home_ninth_runs=None)])["denominator"] == 0
+    )
+
+
+def test_an_unfinished_game_is_excluded():
+    assert skipped_ninth_rate([_game(state="Live")])["denominator"] == 0
+
+
+def test_extra_innings_still_count():
+    """A game reaching the tenth still played a ninth."""
+    assert skipped_ninth_rate([_game(innings=11)])["denominator"] == 1
+
+
+def test_no_countable_games_yields_no_rate_rather_than_zero():
+    assert skipped_ninth_rate([])["rate"] is None
