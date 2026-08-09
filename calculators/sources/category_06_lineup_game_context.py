@@ -29,7 +29,7 @@ happens if the rule is reused anyway.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from datetime import date
 
 import requests
@@ -137,22 +137,43 @@ def fetch_lineup_rates(
 
 
 def lineup_by_spot(
-    spots: dict[int, int],
+    side: Sequence[dict],
     rates: dict[int, dict],
 ) -> dict[int, dict]:
     """Rekey *rates* from player id to batting-order spot.
 
-    *spots* maps batting-order spot to player id, which is what
-    `main.fetch_lineup` already resolves from the boxscore's `battingOrder`
-    encoding. Pure, no network: the rekeying is the only step between a batched
-    fetch and what `CALC_42` and `CALC_43` want, and keeping it here means the
-    calculators never see a player id at all.
+    *side* is one side of `main.fetch_lineup`'s return value: a **list** of
+    ``{"id", "fullName", "team_id", "lineup_spot"}`` records in batting order.
+    Taking the list rather than a prebuilt ``{spot: id}`` mapping is deliberate,
+    because building that mapping is where the substitution bug lives (below) and
+    every caller would have to get it right independently.
+
+    Pure, no network. The rekeying is the only step between a batched fetch and
+    what `CALC_42` and `CALC_43` want, and keeping it here means the calculators
+    never see a player id at all.
+
+    **The first player at a spot wins, and that is not arbitrary.** A boxscore's
+    `battingOrder` encodes the spot in three digits, so ``"100"`` is the posted
+    starter at spot 1 and ``"101"`` is the first substitute to bat there;
+    `main.batting_order_spot` divides by 100, which maps both to spot 1. The
+    array lists them in that order, so taking the first occurrence keeps the
+    posted starter, which is who `CALC_42` and `CALC_43` are about: a projection
+    made before first pitch cannot know about a replacement who has not happened
+    yet. A plain dict comprehension would instead keep whichever came last.
+
+    Duplicates do not arise from a *posted* lineup, which is what this tool
+    reads: all six games sampled on 2026-08-07 carried exactly nine entries with
+    nine distinct spots. They appear once a game is under way, which is when a
+    backtest over completed games would hit them.
     """
-    return {
-        spot: rates[player_id]
-        for spot, player_id in (spots or {}).items()
-        if player_id in rates
-    }
+    lineup: dict[int, dict] = {}
+    for player in side or []:
+        spot = player.get("lineup_spot")
+        player_id = player.get("id")
+        if spot is None or spot in lineup or player_id not in rates:
+            continue
+        lineup[spot] = rates[player_id]
+    return lineup
 
 
 def fetch_pitcher_tto(pitcher_id: int, season: int | None = None) -> list[dict]:

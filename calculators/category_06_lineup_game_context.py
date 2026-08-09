@@ -291,10 +291,19 @@ def batter_tto(pitches: Sequence[dict[str, Any]]) -> list[tuple[int, dict[str, A
     batter faced in **his own first plate appearance of the game**. That is exact
     for anyone in the posted lineup. The guard is `MAX_STARTER_FIRST_INNING`,
     which drops a game the hitter entered late: a pinch hitter debuting in the
-    ninth would otherwise crown a reliever as the starter. Measured across two
-    probe hitters, the first plate appearance fell in inning 1 in 170 of 171
-    games, the exception being exactly such a ninth-inning appearance, and the
-    surviving share of plate appearances was 60 and 61 percent.
+    ninth would otherwise crown a reliever as the starter.
+
+    **The guard was measured where it is actually load-bearing.** Two
+    top-of-order probe hitters had their first plate appearance in inning 1 in
+    170 of 171 games, the exception being exactly such a ninth-inning
+    appearance, but that result is forced: a hitter batting 1 through 4 cannot
+    come up later. Three bottom-of-order regulars are the real test. There the
+    first plate appearance landed in inning 2 in 19 of 52, 22 of 84, and 0 of 99
+    games, every one of which the guard admits, while it dropped 6 and 1 genuine
+    late entries. Inning 3 was never observed as a first plate appearance, so the
+    bound carries one inning of headroom rather than sitting on measured data.
+    The surviving share of plate appearances was 60 to 62 percent across all five
+    hitters, top and bottom of the order alike.
 
     **This leg carries a survivorship confound that the pitcher leg does not, and
     it runs the opposite way.** A hitter only reaches bucket 3 when the starter

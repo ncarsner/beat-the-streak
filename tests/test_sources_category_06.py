@@ -168,24 +168,59 @@ def test_an_http_error_returns_an_empty_mapping(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def _side(*players):
+    """One side of `main.fetch_lineup`'s return value: a list, in batting order.
+
+    Built to the real shape rather than to a convenient one. The earlier version
+    of these tests handed `lineup_by_spot` a prebuilt ``{spot: id}`` mapping,
+    which is not what `fetch_lineup` returns and which quietly assumed away the
+    substitution collision below.
+    """
+    return [
+        {"id": pid, "fullName": "", "team_id": 147, "lineup_spot": spot}
+        for spot, pid in players
+    ]
+
+
 def test_the_rekeying_turns_player_ids_into_batting_order_spots():
     """The calculators never see a player id, only a spot."""
     rates = {101: {"obp": ".375"}, 102: {"obp": ".300"}}
-    assert lineup_by_spot({1: 101, 2: 102}, rates) == {
+    assert lineup_by_spot(_side((1, 101), (2, 102)), rates) == {
         1: {"obp": ".375"},
         2: {"obp": ".300"},
     }
 
 
+def test_the_posted_starter_wins_a_spot_over_a_substitute():
+    """A boxscore encodes the spot in three digits, so "100" is the starter at
+    spot 1 and "101" is the first substitute to bat there; both divide to spot 1.
+    The array lists them in that order, and a projection made before first pitch
+    is about the starter, not a replacement who has not happened yet.
+    """
+    rates = {101: {"obp": ".375"}, 555: {"obp": ".200"}}
+    assert lineup_by_spot(_side((1, 101), (1, 555)), rates) == {1: {"obp": ".375"}}
+
+
+def test_a_substitute_is_still_kept_when_the_starter_has_no_line():
+    """First occurrence wins only among players who resolved to a line at all."""
+    rates = {555: {"obp": ".200"}}
+    assert lineup_by_spot(_side((1, 101), (1, 555)), rates) == {1: {"obp": ".200"}}
+
+
 def test_a_spot_whose_hitter_has_no_line_is_dropped():
-    assert lineup_by_spot({1: 101, 2: 999}, {101: {"obp": ".375"}}) == {
+    assert lineup_by_spot(_side((1, 101), (2, 999)), {101: {"obp": ".375"}}) == {
         1: {"obp": ".375"}
     }
 
 
-@pytest.mark.parametrize("spots", [None, {}])
-def test_rekeying_without_spots_is_empty(spots):
-    assert lineup_by_spot(spots, {101: {"obp": ".375"}}) == {}
+def test_a_player_with_no_resolved_spot_is_dropped():
+    side = [{"id": 101, "lineup_spot": None}]
+    assert lineup_by_spot(side, {101: {"obp": ".375"}}) == {}
+
+
+@pytest.mark.parametrize("side", [None, []])
+def test_rekeying_without_a_side_is_empty(side):
+    assert lineup_by_spot(side, {101: {"obp": ".375"}}) == {}
 
 
 # ---------------------------------------------------------------------------

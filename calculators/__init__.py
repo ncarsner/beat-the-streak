@@ -21,8 +21,8 @@ Layout and naming, applied to every category as it lands:
   in ``data/``, produced on demand by the scripts in ``scripts/`` and checked in
   so a calculator reads a baseline as a constant rather than fetching it.
 
-Implemented so far, 55 of the 76: categories 1-5 (`CALC_01`-`CALC_40`),
-`CALC_41`, and categories 8-9 (`CALC_52`-`CALC_65`). Nothing in this package is
+Implemented so far, 60 of the 76: categories 1-6 (`CALC_01`-`CALC_46`) and
+categories 8-9 (`CALC_52`-`CALC_65`). Nothing in this package is
 called during a run — the calculators are validated individually and will be
 consumed together by the composite model (`CALC_75`).
 

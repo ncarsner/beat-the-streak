@@ -28,9 +28,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   plate appearances as facing a starter, against a true share near 60 percent. The batter side
   instead identifies the starter as whoever the hitter faced in **his own first plate appearance
   of the game**, guarded to inning 3 so a pinch hitter debuting in the ninth cannot crown a
-  reliever. Measured across two probe hitters, the first plate appearance fell in inning 1 in
-  170 of 171 games, the single exception being exactly such an appearance, and the surviving
-  share of plate appearances was 60 and 61 percent.
+  reliever. **The guard was measured where it is load-bearing**: two top-of-order probe hitters
+  had their first plate appearance in inning 1 in 170 of 171 games, but that is forced, since a
+  hitter batting 1 through 4 cannot come up later. Three bottom-of-order regulars are the real
+  test, and there the first plate appearance landed in inning 2 in 19 of 52, 22 of 84 and 0 of
+  99 games, all admitted by the guard, while it dropped 6 and 1 genuine late entries. Inning 3
+  was never observed as a first plate appearance, so the bound carries an inning of headroom.
+  The surviving share was 60 to 62 percent across all five hitters.
+- **`lineup_by_spot` takes `main.fetch_lineup`'s actual return shape**, a list of per-player
+  records in batting order, rather than a prebuilt `{spot: id}` mapping. Building that mapping
+  is where the substitution collision lives: a boxscore encodes the spot in three digits, so
+  `"100"` is the posted starter at spot 1 and `"101"` the first substitute to bat there, and
+  `main.batting_order_spot` maps both to 1. The first occurrence wins, which keeps the posted
+  starter, since a projection made before first pitch cannot know about a replacement that has
+  not happened yet. Duplicates do not arise from a posted lineup (all six games sampled on
+  2026-08-07 carried nine entries and nine distinct spots) but do once a game is under way,
+  which is when a backtest over completed games would meet them.
 - **Relief outings are dropped from the pitcher side**, for a related reason: every plate
   appearance of a relief outing lands in bucket 1, since a reliever rarely faces the same hitter
   twice. Keeping them would drag bucket 1 toward bullpen quality and inflate the apparent

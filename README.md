@@ -673,7 +673,10 @@ the first time he faced *this hitter*, usually the second inning or later. Apply
 classified 35 of a probe hitter's 261 plate appearances as facing a starter, against a true
 share near 60 percent. The batter side instead takes the starter to be whoever the hitter
 faced in his own first plate appearance of the game, guarded to inning 3 so a pinch hitter
-debuting in the ninth cannot crown a reliever.
+debuting in the ninth cannot crown a reliever. That guard was measured on bottom-of-order
+regulars rather than on the top-of-order probes, where inning 1 is forced: their first plate
+appearance landed in inning 2 in 19 of 52, 22 of 84, and 0 of 99 games, all admitted, while 6
+and 1 genuine late entries were dropped.
 
 Relief outings are dropped from the pitcher side for a related reason: every plate appearance
 of a relief outing lands in bucket 1, since a reliever rarely faces the same hitter twice, and
