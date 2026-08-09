@@ -138,6 +138,105 @@ HARD_HIT_MPH = 95.0
 NON_COMPETITIVE_GAME_TYPES = frozenset({"S", "E", "A"})
 
 
+# ---------------------------------------------------------------------------
+# Statcast `pitch_type` grouping
+# ---------------------------------------------------------------------------
+#
+# Statcast `pitch_type` codes grouped the way Baseball Savant's own pitch-group
+# views do. The ROADMAP names the members of two of the three groups directly
+# ("Slider/Sweeper/Curve", "Changeup/Splitter"); the fastball group is the one
+# worth defending.
+#
+# The cutter (FC) is counted as a fastball. It is the arguable call (a cutter
+# breaks, and some classification schemes file it with the sliders) but Savant
+# groups it under fastballs, it is thrown at fastball velocity, and the measured
+# league sample bears out the grouping: mean |pfx_x| of 0.25 ft puts FC nearer
+# the four-seamer (0.67) than the slider (0.36) is to the sweeper (1.11), and its
+# mean vertical approach angle (-6.03) sits between the sinker (-5.77) and the
+# breaking balls (-7.5 and steeper). Reclassifying it moves roughly 9 percent of
+# league pitches, so this is a decision to revisit deliberately, not silently.
+
+FASTBALL_TYPES = frozenset({"FF", "SI", "FC"})
+BREAKING_TYPES = frozenset({"SL", "ST", "CU", "KC", "SV", "CS"})
+OFFSPEED_TYPES = frozenset({"CH", "FS", "FO"})
+
+PITCH_CLASS_FASTBALL = "fastball"
+PITCH_CLASS_BREAKING = "breaking"
+PITCH_CLASS_OFFSPEED = "offspeed"
+
+_CLASS_BY_TYPE = {
+    **dict.fromkeys(FASTBALL_TYPES, PITCH_CLASS_FASTBALL),
+    **dict.fromkeys(BREAKING_TYPES, PITCH_CLASS_BREAKING),
+    **dict.fromkeys(OFFSPEED_TYPES, PITCH_CLASS_OFFSPEED),
+}
+
+
+# ---------------------------------------------------------------------------
+# Statcast `zone` codes
+# ---------------------------------------------------------------------------
+#
+# Statcast's own `zone`, used as published. Codes 1-9 are the 3x3 in-zone grid
+# CALC_30 asks for; codes 11-14 are the four out-of-zone quadrants. There is no
+# code 10. See the source module for why these are not reconstructed from
+# `plate_x` / `plate_z`.
+
+IN_ZONE_CODES = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9})
+OUT_OF_ZONE_CODES = frozenset({11, 12, 13, 14})
+
+
+def pitch_class(pitch_type: str | None) -> str | None:
+    """Group a Statcast `pitch_type` code into fastball / breaking / offspeed.
+
+    Returns None for a missing code and for the handful that belong to no group
+    (pitchouts, intentional balls, eephus, knuckleballs, and Statcast's own
+    "unknown"). They are 0.1 percent of league pitches and they are excluded
+    rather than assigned, so a usage share reflects only what was classified.
+    """
+    return _CLASS_BY_TYPE.get(pitch_type)
+
+
+def zone_code(pitch: dict[str, Any]) -> int | None:
+    """Statcast's zone code for *pitch* as an int, or None when untracked.
+
+    Coerced rather than read straight through because the value arrives as a
+    float whenever the source frame carried nulls in the column, which is the
+    normal case: pandas widens an integer column to float64 to hold NaN, and the
+    cache's CSV round-trip preserves that. A bare ``pitch["zone"] in
+    IN_ZONE_CODES`` test would then compare 5.0 against a set of ints and match
+    nothing, silently emptying every zone-based rate in the category.
+
+    The coercion is integrality-checked rather than a plain ``int()``, which
+    truncates. `zone` is categorical, so 9.7 is not a zone that rounds to a
+    neighbor, it is a value this column should never hold; truncating it to 9
+    would place a malformed reading inside the strike zone and let it into a rate.
+    A non-integral value is no reading at all.
+
+    Duck-typed rather than ``isinstance(raw, (int, float))`` on purpose: numpy's
+    ``int64`` is not a subclass of Python's ``int``, and the source modules do not
+    unwrap numpy scalars, so a type check would reject the ordinary case.
+    ``OverflowError`` is caught alongside the rest because ``int(inf)`` raises it
+    where ``int(nan)`` raises ``ValueError``.
+    """
+    raw = pitch.get("zone")
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        code = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return code if code == raw else None
+
+
+def is_in_zone(pitch: dict[str, Any]) -> bool:
+    """Whether *pitch* was located in the strike zone."""
+    return zone_code(pitch) in IN_ZONE_CODES
+
+
+def is_out_of_zone(pitch: dict[str, Any]) -> bool:
+    """Whether *pitch* was located outside the strike zone."""
+    return zone_code(pitch) in OUT_OF_ZONE_CODES
+
+
 def is_competitive(record: dict[str, Any]) -> bool:
     """Whether *record* comes from a competitive game.
 

@@ -52,6 +52,7 @@ from typing import Any, Sequence
 
 from calculators.common import (
     CONTACT_DESCRIPTIONS,
+    IN_ZONE_CODES,
     MULTIPLIER,
     ON_BASE_EVENTS,
     OUT_EVENTS,
@@ -59,8 +60,11 @@ from calculators.common import (
     Rate,
     SWING_DESCRIPTIONS,
     WHIFF_DESCRIPTIONS,
+    is_in_zone,
+    is_out_of_zone,
     rate_or_none,
     terminal_pitch_by_pa,
+    zone_code,
 )
 
 # ---------------------------------------------------------------------------
@@ -87,19 +91,6 @@ CALLED_STRIKE_DESCRIPTIONS = frozenset({"called_strike"})
 UNTHROWN_DESCRIPTIONS = frozenset({"automatic_ball", "automatic_strike"})
 
 # ---------------------------------------------------------------------------
-# Zone codes
-# ---------------------------------------------------------------------------
-#
-# Statcast's own `zone`, used as published. Codes 1-9 are the 3x3 in-zone grid
-# CALC_30 asks for; codes 11-14 are the four out-of-zone quadrants. There is no
-# code 10. See the source module for why these are not reconstructed from
-# `plate_x` / `plate_z`.
-
-IN_ZONE_CODES = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9})
-OUT_OF_ZONE_CODES = frozenset({11, 12, 13, 14})
-
-
-# ---------------------------------------------------------------------------
 # Pitch-level predicates
 # ---------------------------------------------------------------------------
 
@@ -122,48 +113,6 @@ def is_contact(pitch: dict[str, Any]) -> bool:
 def was_thrown(pitch: dict[str, Any]) -> bool:
     """Whether *pitch* was a real delivery rather than an automatic count event."""
     return pitch.get("description") not in UNTHROWN_DESCRIPTIONS
-
-
-def zone_code(pitch: dict[str, Any]) -> int | None:
-    """Statcast's zone code for *pitch* as an int, or None when untracked.
-
-    Coerced rather than read straight through because the value arrives as a
-    float whenever the source frame carried nulls in the column, which is the
-    normal case: pandas widens an integer column to float64 to hold NaN, and the
-    cache's CSV round-trip preserves that. A bare ``pitch["zone"] in
-    IN_ZONE_CODES`` test would then compare 5.0 against a set of ints and match
-    nothing, silently emptying every zone-based rate in the category.
-
-    The coercion is integrality-checked rather than a plain ``int()``, which
-    truncates. `zone` is categorical, so 9.7 is not a zone that rounds to a
-    neighbor, it is a value this column should never hold; truncating it to 9
-    would place a malformed reading inside the strike zone and let it into a rate.
-    A non-integral value is no reading at all.
-
-    Duck-typed rather than ``isinstance(raw, (int, float))`` on purpose: numpy's
-    ``int64`` is not a subclass of Python's ``int``, and the source modules do not
-    unwrap numpy scalars, so a type check would reject the ordinary case.
-    ``OverflowError`` is caught alongside the rest because ``int(inf)`` raises it
-    where ``int(nan)`` raises ``ValueError``.
-    """
-    raw = pitch.get("zone")
-    if raw is None or isinstance(raw, bool):
-        return None
-    try:
-        code = int(raw)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return code if code == raw else None
-
-
-def is_in_zone(pitch: dict[str, Any]) -> bool:
-    """Whether *pitch* was located in the strike zone."""
-    return zone_code(pitch) in IN_ZONE_CODES
-
-
-def is_out_of_zone(pitch: dict[str, Any]) -> bool:
-    """Whether *pitch* was located outside the strike zone."""
-    return zone_code(pitch) in OUT_OF_ZONE_CODES
 
 
 def _zoned(pitches: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:

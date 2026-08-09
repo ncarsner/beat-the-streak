@@ -48,45 +48,17 @@ from typing import Any, Sequence
 
 from calculators.common import (
     DELTA,
+    PITCH_CLASS_BREAKING,
+    PITCH_CLASS_FASTBALL,
+    PITCH_CLASS_OFFSPEED,
     HIT_EVENTS,
     MULTIPLIER,
     PROBABILITY,
     Rate,
+    pitch_class,
     rate_or_none,
     terminal_pitch_by_pa,
 )
-
-# ---------------------------------------------------------------------------
-# Pitch classification
-# ---------------------------------------------------------------------------
-#
-# Statcast `pitch_type` codes grouped the way Baseball Savant's own pitch-group
-# views do. The ROADMAP names the members of two of the three groups directly
-# ("Slider/Sweeper/Curve", "Changeup/Splitter"); the fastball group is the one
-# worth defending.
-#
-# The cutter (FC) is counted as a fastball. It is the arguable call — a cutter
-# breaks, and some classification schemes file it with the sliders — but Savant
-# groups it under fastballs, it is thrown at fastball velocity, and the measured
-# league sample bears out the grouping: mean |pfx_x| of 0.25 ft puts FC nearer
-# the four-seamer (0.67) than the slider (0.36) is to the sweeper (1.11), and its
-# mean vertical approach angle (-6.03) sits between the sinker (-5.77) and the
-# breaking balls (-7.5 and steeper). Reclassifying it moves roughly 9 percent of
-# league pitches, so this is a decision to revisit deliberately, not silently.
-
-FASTBALL_TYPES = frozenset({"FF", "SI", "FC"})
-BREAKING_TYPES = frozenset({"SL", "ST", "CU", "KC", "SV", "CS"})
-OFFSPEED_TYPES = frozenset({"CH", "FS", "FO"})
-
-PITCH_CLASS_FASTBALL = "fastball"
-PITCH_CLASS_BREAKING = "breaking"
-PITCH_CLASS_OFFSPEED = "offspeed"
-
-_CLASS_BY_TYPE = {
-    **dict.fromkeys(FASTBALL_TYPES, PITCH_CLASS_FASTBALL),
-    **dict.fromkeys(BREAKING_TYPES, PITCH_CLASS_BREAKING),
-    **dict.fromkeys(OFFSPEED_TYPES, PITCH_CLASS_OFFSPEED),
-}
 
 # ---------------------------------------------------------------------------
 # Tier boundaries
@@ -157,17 +129,6 @@ _VAA_PLATE_FRONT_Y_FEET = 17.0 / 12.0
 # ---------------------------------------------------------------------------
 # Pitch-level helpers
 # ---------------------------------------------------------------------------
-
-
-def pitch_class(pitch_type: str | None) -> str | None:
-    """Group a Statcast `pitch_type` code into fastball / breaking / offspeed.
-
-    Returns None for a missing code and for the handful that belong to no group
-    — pitchouts, intentional balls, eephus, knuckleballs, and Statcast's own
-    "unknown". They are 0.1 percent of league pitches and they are excluded
-    rather than assigned, so a usage share reflects only what was classified.
-    """
-    return _CLASS_BY_TYPE.get(pitch_type)
 
 
 def velocity_tier(release_speed: float | None) -> str | None:

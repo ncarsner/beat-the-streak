@@ -311,6 +311,93 @@ def _form_pa(events=None, *, hit=False, **kwargs):
     return _form_pitch(events=events, **kwargs)
 
 
+def _form_pitch_thrown(
+    game_date="2026-07-01",
+    game_pk=1,
+    game_type="R",
+    at_bat_number=1,
+    pitch_number=1,
+    inning=1,
+    inning_topbot="Top",
+    outs_when_up=0,
+    events=None,
+    description="ball",
+    pitch_type="FF",
+    release_speed=94.0,
+    zone=5,
+    launch_speed=None,
+    bat_score=0,
+    post_bat_score=0,
+):
+    """Build one Category 9 pitch record.
+
+    Defaults to the first pitch of a start: inning 1, zero outs, a competitive
+    regular-season game. `_start` below composes these into whole outings.
+    """
+    return {
+        "game_date": game_date,
+        "game_pk": game_pk,
+        "game_type": game_type,
+        "at_bat_number": at_bat_number,
+        "pitch_number": pitch_number,
+        "inning": inning,
+        "inning_topbot": inning_topbot,
+        "outs_when_up": outs_when_up,
+        "events": events,
+        "description": description,
+        "pitch_type": pitch_type,
+        "release_speed": release_speed,
+        "zone": zone,
+        "launch_speed": launch_speed,
+        "bat_score": bat_score,
+        "post_bat_score": post_bat_score,
+    }
+
+
+def _start(game_pk=1, game_date="2026-07-01", innings=1, events_per_inning=None, **kw):
+    """Compose a whole start as one-pitch plate appearances.
+
+    *events_per_inning* is a list of event lists, one per inning; it defaults to
+    three routine outs per inning. `outs_when_up` is advanced within each inning
+    the way the real feed does, so the outs reconstruction sees a faithful shape.
+
+    Any extra keyword is passed through to every pitch, which is how a test sets
+    a velocity, a zone, or a game type across a whole start at once.
+    """
+    if events_per_inning is None:
+        events_per_inning = [["field_out"] * 3 for _ in range(innings)]
+    pitches = []
+    ab = 1
+    for offset, events in enumerate(events_per_inning):
+        outs = 0
+        for event in events:
+            pitches.append(
+                _form_pitch_thrown(
+                    game_pk=game_pk,
+                    game_date=game_date,
+                    at_bat_number=ab,
+                    inning=offset + 1,
+                    outs_when_up=outs,
+                    events=event,
+                    **kw,
+                )
+            )
+            ab += 1
+            outs += _OUTS.get(event, 0)
+    return pitches
+
+
+_OUTS = {
+    "field_out": 1,
+    "strikeout": 1,
+    "force_out": 1,
+    "sac_fly": 1,
+    "grounded_into_double_play": 2,
+    "double_play": 2,
+    "triple_play": 3,
+}
+
+
 # ---- pybaseball stub (shared by source tests) ----
 
 

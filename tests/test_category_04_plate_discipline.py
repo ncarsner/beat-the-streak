@@ -2,14 +2,23 @@
 
 import pytest
 
-from calculators.common import MULTIPLIER, PROBABILITY
-from calculators.category_04_plate_discipline import (
+from calculators.common import (
     CONTACT_DESCRIPTIONS,
     IN_ZONE_CODES,
+    MULTIPLIER,
     OUT_OF_ZONE_CODES,
+    PROBABILITY,
     SWING_DESCRIPTIONS,
-    UNTHROWN_DESCRIPTIONS,
     WHIFF_DESCRIPTIONS,
+    is_in_zone,
+    is_out_of_zone,
+    zone_code,
+)
+from calculators.category_04_plate_discipline import (
+    UNTHROWN_DESCRIPTIONS,
+    is_contact,
+    is_swing,
+    is_whiff,
     calc_24_zone_contact_match,
     calc_25_chase_vulnerability,
     calc_26_whiff_overlay,
@@ -19,14 +28,8 @@ from calculators.category_04_plate_discipline import (
     calc_30_quadrant_acuity,
     compute_category_04,
     hitter_zone_xba,
-    is_contact,
-    is_in_zone,
-    is_out_of_zone,
-    is_swing,
-    is_whiff,
     pitcher_zone_weights,
     was_thrown,
-    zone_code,
 )
 from tests.conftest import _discipline_pitch
 
