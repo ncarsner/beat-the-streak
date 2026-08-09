@@ -5,6 +5,66 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-09 (later)
+
+### Added
+- Category 8 batter trending-form calculators (`CALC_52`-`CALC_59`) in
+  `calculators/category_08_batter_form.py`, with the source fetcher in
+  `calculators/sources/category_08_batter_form.py`. The first **single-sided** category and
+  the first real consumer of `common.py`'s `Window` machinery: `DAYS(7)` and `DAYS(14)` for
+  the calendar rates, `PLATE_APPEARANCES(30)` for the sweet-spot trend, and a game log for
+  the game-anchored ones.
+- Non-competitive game filtering. `common.NON_COMPETITIVE_GAME_TYPES` and
+  `common.is_competitive` exclude spring training, exhibitions, and the All-Star game;
+  postseason codes are deliberately not enumerated, so they are kept. A Statcast season pull
+  includes spring games (7.8% of the probe batter's pitches, 10.1% of the probe pitcher's),
+  and Statcast **computes no expected statistics for them at all** (13 of 13 spring batted
+  balls carried a null xBA against 1 of 143 in the regular season). Filtering flipped the
+  probe hitter's `CALC_57` from +0.0043 to -0.0183, a sign change.
+- A `today` parameter on every Category 8 calculator, threaded to `apply_window`. A
+  calculator that reads the clock internally cannot be evaluated against a past date, which
+  is what the validation harness in #35 has to do.
+- `CALC_57` puts both of its legs over the same plate-appearance denominator. An xBA estimate
+  exists only on batted balls, so a naive mean xBA (.41) minus a hit rate (.21) yields about
+  -.20 for every hitter alive: a units error that reads as a catastrophic slump. Plate
+  appearances whose batted ball carries no xBA estimate are dropped from both legs, since an
+  unestimated hit would manufacture the appearance of good luck.
+- `CALC_52` is a per-plate-appearance hit rate, not the "hit in last 3 games, Y/N" frequency
+  the ROADMAP's shorthand suggests. That frequency is the model's output scale, so feeding it
+  back in as a `p_hit` input would apply the binomial twice; it rides along as
+  `CALC_52_MULTI_HIT` instead.
+
+### Changed
+- `SWING_DESCRIPTIONS`, `WHIFF_DESCRIPTIONS`, `CONTACT_DESCRIPTIONS`, `IN_PLAY`, and
+  `HARD_HIT_MPH` promoted to `calculators/common.py`. Categories 1, 4, and 8 had each defined
+  the same vocabulary independently; they agreed on membership at the time of the move, which
+  is the good case and not one to rely on twice. Same reasoning as the `HIT_EVENTS` and
+  `terminal_pitch_by_pa` promotions. No behavior change.
+
+### Known caveats
+- **Categories 1 through 4 do not filter spring training** and are computed over samples that
+  are 8 to 10 percent spring games. For Categories 3 and 4 it is worse than dilution: their
+  expected-stat keys (`CALC_16`/`17`/`18`, `CALC_30`) silently drop spring batted balls from
+  their numerators while the rate keys in the same categories count spring pitches in their
+  denominators. Drafted for filing as an issue rather than repaired here.
+- Role tags in Category 8 follow Category 4's stricter convention, reserving `PROBABILITY`
+  for p_hit-scale rates. Category 1 tags its hard-hit rate and xwOBA `PROBABILITY` "for
+  uniformity" with a docstring warning. The two conventions disagree; Category 1's puts a .56
+  hard-hit rate and a .21 hit rate under the same tag.
+- `CALC_58`'s baseline is a **season** baseline, not the career one the ROADMAP also mentions.
+  The source is season-scoped, so a career BABIP needs a multi-season pull that does not
+  exist yet.
+
+### Verified
+- 793 tests passing, ruff format and check clean, zero live network escapes from the suite.
+- Smoke test against a real Statcast frame, run twice: once at the true current date and once
+  anchored to the batter's last game, which is what exercises the recency windows at all.
+  Every populated value was independently reproduced from raw pandas, including
+  `CALC_57 = -0.0183` and the `CALC_52` sample of 14 plate appearances across three games.
+- `main.py` byte-identical. Nothing in the package is called during a daily run.
+
+---
+
 ## 2026-08-09
 
 ### Added

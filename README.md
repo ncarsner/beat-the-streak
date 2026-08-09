@@ -151,12 +151,14 @@ calculators/
     category_03_pitch_arsenal.py         # CALC_16-23
     category_04_plate_discipline.py      # CALC_24-30
     category_06_lineup_game_context.py   # CALC_41
+    category_08_batter_form.py           # CALC_52-59
     sources/                             # the only package here that touches the network
         common.py                        #   HTTP + Statcast response cache
         category_01_bvp_matchups.py
         category_02_platoon_splits.py
         category_03_pitch_arsenal.py
         category_04_plate_discipline.py
+        category_08_batter_form.py
 tests/                                   # mirrors the module layout, one file per module
 scripts/                                 # on-demand generators, never run by the tool
 ```
@@ -430,6 +432,59 @@ convention: swinging-strike rate credits a pitcher for provoking the swing at al
 (.764 against .694 on the smoke-test hitter) because every foul with two strikes keeps the
 plate appearance alive at two strikes, so a hitter who battles contributes many contacts and
 no whiffs.
+
+### Batter form and quality-of-contact calculators
+
+`category_08_batter_form.py` implements Category 8 (`CALC_52`-`CALC_59`), the first
+**single-sided** category: it asks only how the hitter is going, so nothing about today's
+starter enters. It is also the first real consumer of `common.py`'s `Window` machinery.
+
+| Calculator | Value | Window |
+|---|---|---|
+| `CALC_52` | hits per plate appearance, plus `_MULTI_HIT` (share of games with 2+) | last 3 games |
+| `CALC_53` / `CALC_54` | hits per plate appearance | last 7 / 14 calendar days |
+| `CALC_55` | `_XWOBA` and `_HARD_HIT`, both per batted ball | last 14 days |
+| `CALC_56` | active hit streak, in games (`DELTA`) | walks back from the most recent game |
+| `CALC_57` | actual minus expected hit rate (`DELTA`) | whole pull, or a passed `Window` |
+| `CALC_58` | recent BABIP, plus `_SEASON` baseline and `_DELTA` | last 14 days vs. season |
+| `CALC_59` | sweet-spot rate, launch angle 8 to 32 degrees | last 30 plate appearances |
+
+**Spring training is excluded here, and only here.** A Statcast season pull includes spring
+games: 7.8% of the probe batter's pitches and 10.1% of the probe pitcher's. At season
+aggregate that is noise; across a 3-game or 7-day window in late March it is most of the
+sample. It compounds, because Statcast **computes no expected statistics for spring games**
+at all (13 of 13 spring batted balls had a null xBA, against 1 of 143 in the regular season),
+so keeping them puts plate appearances into a denominator whose expected-stat numerator
+silently vanishes. Filtering flipped the probe hitter's `CALC_57` from +0.0043 to -0.0183, a
+sign change. Categories 1 through 4 do not filter; that is a real defect in shipped code and
+is drafted for filing rather than repaired in passing.
+
+**Every calculator takes `today`.** A calculator that reads the clock internally cannot be
+evaluated against a past date, which is precisely what the validation harness in #35 has to
+do. `today` threads to `apply_window`, whose `DAYS(n)` window ends *yesterday*, since today's
+game has not been played.
+
+**`CALC_57`'s two legs share one denominator, and that is the whole calculator.** An xBA
+estimate exists only on batted balls, so a naive mean xBA runs near .41 while a hit rate runs
+near .21; subtracting them yields about -.20 for every hitter alive, which looks like a
+catastrophic slump and is a units error. Both legs here divide by the same plate appearances,
+with a strikeout contributing 0 to both numerators and 1 to the shared denominator. Plate
+appearances whose batted ball carries no xBA are dropped from both, since an unestimated hit
+would manufacture the appearance of good luck.
+
+**`CALC_52` is not the "hit in the last 3 games, Y/N" frequency** the ROADMAP's shorthand
+suggests. That quantity is the model's *output* scale, the left-hand side of
+`1 - (1 - p_hit)^PA_proj`, so feeding it back in as an input would apply the binomial twice.
+The primary is hits per plate appearance; the multi-hit frequency rides along as a secondary.
+
+Two smaller notes. `CALC_52` and `CALC_56` build a game log keyed on `game_pk` rather than
+routing through `apply_window(GAMES(n))`, because that helper dedups by date string and would
+collapse a doubleheader into one game. And role tags follow Category 4's stricter convention:
+`PROBABILITY` is reserved for the three genuine per-plate-appearance hit rates, while
+hard-hit rate, sweet-spot rate, xwOBA, and BABIP are `MULTIPLIER`. Category 1 tags its
+hard-hit rate and xwOBA `PROBABILITY` "for uniformity" with a docstring warning instead; the
+two conventions disagree, and Category 1's puts a .56 hard-hit rate and a .21 hit rate under
+the same tag.
 
 ### Lineup spot and CALC_41
 
