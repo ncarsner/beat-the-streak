@@ -383,12 +383,23 @@ def calc_71_unfamiliarity(bvp: dict[str, Any] | None) -> DELTA | None:
     recognized stat group. An unresolved payload returns None -- no evidence,
     which is the truth -- rather than reporting a confident first meeting off a
     failed fetch.
+
+    **The denominator is the placeholder 1, not the career plate-appearance
+    count, and the difference matters in exactly the branch that fires.** Using
+    the count would give a never-faced pair ``Rate(1.0, 0)`` -- the only
+    zero-denominator `Rate` anywhere in the model, and one `rate_or_none` would
+    refuse to construct at all. Issue #34's shrinkage rule would read that zero as
+    infinitely weak evidence and shrink the indicator away, deleting the one
+    signal this calculator exists to report. So the denominator is 1 and is not a
+    sample size, the same as `CALC_69`'s indicator and `CALC_34`'s temperature.
+    Nothing is lost by dropping the count: `CALC_01` already carries the career
+    plate appearances as its own denominator, over the same payload.
     """
     if not bvp or not bvp.get("resolved"):
         return None
     career = bvp.get("career") or {}
     plate_appearances = career.get("plateAppearances") or 0
-    return DELTA(Rate(0.0 if plate_appearances else 1.0, int(plate_appearances)))
+    return DELTA(Rate(0.0 if plate_appearances else 1.0, 1))
 
 
 # ---------------------------------------------------------------------------

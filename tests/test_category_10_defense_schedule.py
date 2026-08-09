@@ -349,11 +349,23 @@ def test_no_threshold_for_cross_country_is_applied_here():
 def test_a_pair_that_has_never_met_reports_one():
     result = calc_71_unfamiliarity(_bvp(plate_appearances=None))
     assert isinstance(result, DELTA)
-    assert result.value == (1.0, 0)
+    assert result.value.rate == 1.0
 
 
 def test_a_pair_with_history_reports_zero():
-    assert calc_71_unfamiliarity(_bvp(plate_appearances=9)).value == (0.0, 9)
+    assert calc_71_unfamiliarity(_bvp(plate_appearances=9)).value.rate == 0.0
+
+
+@pytest.mark.parametrize("plate_appearances", [None, 0, 9, 40])
+def test_the_denominator_is_never_zero(plate_appearances):
+    """Using the career plate-appearance count would give a never-faced pair
+    Rate(1.0, 0) -- the only zero-denominator Rate in the model, and one
+    `rate_or_none` refuses to construct. #34's shrinkage would read it as
+    infinitely weak evidence and delete the very signal this reports. The count
+    is not lost: CALC_01 carries it over the same payload.
+    """
+    result = calc_71_unfamiliarity(_bvp(plate_appearances=plate_appearances))
+    assert result.value.denominator == 1
 
 
 def test_a_resolved_zero_plate_appearance_line_also_reports_one():

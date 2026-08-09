@@ -609,9 +609,16 @@ def _sched_game(
     }
 
 
-# Two real venues, used where a distance or a time-zone shift has to be a number
+# Real venues, used where a distance or a time-zone shift has to be a number
 # someone can check. Wrigley Field to Yankee Stadium is 715.1 miles great-circle
 # and one hour eastward during daylight saving.
+#
+# The coordinates are **hand-transcribed, not loaded from
+# `calculators/data/ballparks.json`**, so these fixtures are a second independent
+# source for the same physical facts. That is deliberate -- a test that reads the
+# table it is checking proves only self-consistency -- but it does mean a venue
+# whose published coordinates change would leave these stale while still passing.
+# Low risk: stadiums do not move.
 WRIGLEY = {
     "name": "Wrigley Field",
     "latitude": 41.9484,
