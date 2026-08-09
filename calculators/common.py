@@ -12,6 +12,11 @@ from typing import Any, Iterable, NamedTuple, Sequence
 # category that divides one count by another draws its terms from this set.
 COUNTING_STATS = ("plateAppearances", "atBats", "hits", "strikeOuts", "baseOnBalls")
 
+# Statcast `events` values that put a hit on the board. Lives here rather than
+# in one category because every category that counts hits off pitch-level rows
+# needs the same set, and two copies would eventually disagree.
+HIT_EVENTS = frozenset({"single", "double", "triple", "home_run"})
+
 
 class Rate(NamedTuple):
     """A rate paired with the sample size it was computed over.

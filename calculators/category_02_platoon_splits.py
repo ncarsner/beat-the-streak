@@ -40,6 +40,7 @@ from typing import Any, Sequence
 from calculators.common import (
     DAYS,
     DELTA,
+    HIT_EVENTS,
     MULTIPLIER,
     PROBABILITY,
     Rate,
@@ -48,8 +49,9 @@ from calculators.common import (
     rate_or_none,
 )
 
-# Statcast `events` values that put a hit on the board.
-HIT_EVENTS = frozenset({"single", "double", "triple", "home_run"})
+# `HIT_EVENTS` was defined here originally and now lives in `common.py`, since
+# Category 3 counts hits off the same pitch-level rows. Still imported into this
+# namespace, so `category_02_platoon_splits.HIT_EVENTS` resolves as before.
 
 # Arm-angle bucket boundaries, in degrees. Savant reports 90 as directly
 # overhead, 0 as horizontal, and negative for submarine.

@@ -136,6 +136,70 @@ def _pitch(description="ball", events=None, strikes=0, ev=None, xba=None, xwoba=
     }
 
 
+# ---- Category 3 arsenal pitch builder (calculator and source tests) ----
+#
+# Two real Statcast trajectory rows, lifted from the same 2026 league sample the
+# tier boundaries were measured against. Tests that need a *known* vertical
+# approach angle use these rather than invented numbers: hand-picked vy0/ay/vz0/az
+# values can easily describe a pitch that could not physically be thrown, and the
+# VAA solution would then be exercised on geometry it will never see.
+REAL_FOUR_SEAMER = {
+    "vy0": -131.018533,
+    "ay": 24.137732,
+    "vz0": -4.933477,
+    "az": -20.932360,
+}  # solves to -6.086148 degrees; release_speed 90.3
+
+REAL_CURVEBALL = {
+    "vy0": -110.243528,
+    "ay": 21.474273,
+    "vz0": -3.332133,
+    "az": -36.793284,
+}  # solves to -11.443100 degrees; release_speed 75.8
+
+
+def _arsenal_pitch(
+    game_pk=1,
+    at_bat_number=1,
+    pitch_number=1,
+    events=None,
+    pitch_type="FF",
+    release_speed=93.0,
+    effective_speed=None,
+    release_extension=6.4,
+    delta_run_exp=None,
+    pfx_x=None,
+    xba=None,
+    attack_angle=None,
+    trajectory=None,
+):
+    """Build one Category 3 pitch record.
+
+    *trajectory* is a dict of vy0/ay/vz0/az — pass `REAL_FOUR_SEAMER` or
+    `REAL_CURVEBALL` when the vertical approach angle matters, and leave it None
+    when it does not, which omits the four keys entirely so
+    `vertical_approach_angle` returns None the way a pre-tracking row would.
+    """
+    record = {
+        "game_date": "2026-07-01",
+        "game_pk": game_pk,
+        "at_bat_number": at_bat_number,
+        "pitch_number": pitch_number,
+        "events": events,
+        "pitch_type": pitch_type,
+        "release_speed": release_speed,
+        "effective_speed": effective_speed,
+        "release_extension": release_extension,
+        "delta_run_exp": delta_run_exp,
+        "pfx_x": pfx_x,
+        "estimated_ba_using_speedangle": xba,
+        "attack_angle": attack_angle,
+    }
+    if trajectory:
+        record.update(trajectory)
+    return record
+
+
 # ---- pybaseball stub (shared by source tests) ----
 
 
