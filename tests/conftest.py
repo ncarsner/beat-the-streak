@@ -574,6 +574,96 @@ def _start_pas(game_pk=1, batters=(101, 102, 103), turns=3, events="field_out", 
     return pas
 
 
+# ---- Category 10 schedule builders ----
+
+
+def _sched_game(
+    game_pk=1,
+    game_date="2026-08-03",
+    game_number=1,
+    day_night="night",
+    venue_id=3313,
+    start_hour=23,
+):
+    """One record as `fetch_team_game_log` normalizes a schedule game.
+
+    `start_time` is timezone-aware UTC, matching what the fetcher parses out of
+    the API's ISO-8601 `gameDate`.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        day = datetime.fromisoformat(game_date)
+        start = datetime(day.year, day.month, day.day, start_hour, tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        # Mirrors the fetcher, whose `_parse_start` returns None on a value it
+        # cannot parse rather than raising.
+        start = None
+    return {
+        "game_pk": game_pk,
+        "game_date": game_date,
+        "game_number": game_number,
+        "day_night": day_night,
+        "venue_id": venue_id,
+        "start_time": start,
+    }
+
+
+# Two real venues, used where a distance or a time-zone shift has to be a number
+# someone can check. Wrigley Field to Yankee Stadium is 715.1 miles great-circle
+# and one hour eastward during daylight saving.
+WRIGLEY = {
+    "name": "Wrigley Field",
+    "latitude": 41.9484,
+    "longitude": -87.6553,
+    "timezone_id": "America/Chicago",
+    "utc_offset_hours": -5,
+    "elevation_ft": 595,
+    "roof_type": "Open",
+    "fences_ft": [355, 368, 400, 368, 353],
+}
+
+YANKEE = {
+    "name": "Yankee Stadium",
+    "latitude": 40.82919482,
+    "longitude": -73.9264977,
+    "timezone_id": "America/New_York",
+    "utc_offset_hours": -4,
+    "elevation_ft": 55,
+    "roof_type": "Open",
+    "fences_ft": [318, 399, 408, 385, 314],
+}
+
+PHOENIX = {
+    "name": "Chase Field",
+    "latitude": 33.4455,
+    "longitude": -112.0667,
+    "timezone_id": "America/Phoenix",
+    "utc_offset_hours": -7,
+    "elevation_ft": 1086,
+    "roof_type": "Retractable",
+    "fences_ft": [328, 412, 407, 414, 335],
+}
+
+SAN_FRANCISCO = {
+    "name": "Oracle Park",
+    "latitude": 37.7786,
+    "longitude": -122.3893,
+    "timezone_id": "America/Los_Angeles",
+    "utc_offset_hours": -7,
+    "elevation_ft": 0,
+    "roof_type": "Open",
+    "fences_ft": [339, 399, 391, 415, 309],
+}
+
+TEST_BALLPARKS = {
+    "17": WRIGLEY,
+    "3313": YANKEE,
+    "15": PHOENIX,
+    "2395": SAN_FRANCISCO,
+}
+
+
 # ---- pybaseball stub (shared by source tests) ----
 
 

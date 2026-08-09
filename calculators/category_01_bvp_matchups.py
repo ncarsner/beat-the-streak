@@ -53,11 +53,31 @@ def parse_bvp_stats(payload: dict[str, Any]) -> dict[str, Any]:
     whose only season split showed 3 PA carried a 2 PA career total, which would
     make CALC_01's sample smaller than CALC_03's window over the same matchup.
     The API total is used only when no season splits came back at all. Malformed
-    or empty responses normalize to ``{"career": None, "by_season": {}}`` rather
-    than raising.
+    or empty responses normalize to an unresolved payload rather than raising.
+
+    **`resolved` distinguishes "the API answered" from "nothing came back", and
+    `CALC_71` is why it exists.** A pair that has never faced each other returns
+    HTTP 200 with both groups present and empty, which parses to a null career --
+    exactly what a failed fetch produces through `empty_bvp`. Every other
+    calculator reads a null career as "no sample" and returns None, so the
+    ambiguity is harmless to them. `CALC_71`'s whole value *is* that zero, so for
+    it the two cases are opposite answers, and reporting "never faced" on a
+    dropped request would be a confident wrong answer rather than a missing one.
+
+    The flag requires at least one recognized stat *group*, not any particular
+    splits inside it, because a never-faced pair legitimately has empty splits.
+    Measured 2026-08-09: a pair that has faced each other returns
+    ``[vsPlayerTotal(1), vsPlayer(3)]`` and a pair that has not returns
+    ``[vsPlayer(0), vsPlayerTotal(0)]`` -- both groups named, both empty. A
+    payload with no groups, or with only unnamed ones, is treated as unresolved,
+    which errs toward `CALC_71` reporting None rather than a confident 1.0.
     """
     api_total: dict[str, int] | None = None
     by_season: dict[int, dict[str, int]] = {}
+    resolved = any(
+        (group.get("type") or {}).get("displayName") in ("vsPlayer", "vsPlayerTotal")
+        for group in payload.get("stats") or []
+    )
 
     for group in payload.get("stats") or []:
         group_name = (group.get("type") or {}).get("displayName")
@@ -78,7 +98,7 @@ def parse_bvp_stats(payload: dict[str, Any]) -> dict[str, Any]:
 
     career = aggregate_lines(by_season.values()) if by_season else api_total
 
-    return {"career": career, "by_season": by_season}
+    return {"career": career, "by_season": by_season, "resolved": resolved}
 
 
 def _season_window(bvp: dict[str, Any], season: int, years: int) -> dict[str, int]:

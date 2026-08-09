@@ -18,12 +18,18 @@ crosswalk pattern: static reference data, hand-regenerated, auditable in git.
 
 What the API does and does not publish
 --------------------------------------
-`GET /venues/{id}?hydrate=location,fieldInfo` carries `location.elevation`,
+`GET /venues/{id}?hydrate=location,fieldInfo,timezone` carries `location.elevation`,
 `location.azimuthAngle` (the compass bearing from home plate to center field),
-`fieldInfo.roofType`, `fieldInfo.turfType`, and five fence distances. It does
-**not** publish wall *heights*, which is why `CALC_33` is a distance-only
-geometry match: the Green Monster reads as a 310-foot left-field line here, with
-nothing to say it is 37 feet tall.
+`location.defaultCoordinates`, `timeZone`, `fieldInfo.roofType`,
+`fieldInfo.turfType`, and five fence distances. It does **not** publish wall
+*heights*, which is why `CALC_33` is a distance-only geometry match: the Green
+Monster reads as a 310-foot left-field line here, with nothing to say it is 37
+feet tall.
+
+Coordinates and time zone exist for Category 10: `CALC_70` measures travel as a
+great-circle distance between consecutive venues and the body-clock cost as the
+change in UTC offset. Both are additive to what Category 5 reads, so
+regenerating this file does not disturb `CALC_33`, `CALC_35`, or `CALC_39`.
 
 Measured 2026-08-09 across all 30 venues: every field above was populated, roof
 types were {Open, Retractable, Dome}, and the sector means were LL 332.4,
@@ -69,7 +75,7 @@ def fetch_venue(venue_id: int) -> dict | None:
     """
     resp = requests.get(
         f"{MLB_API_BASE}/venues/{venue_id}",
-        params={"hydrate": "location,fieldInfo"},
+        params={"hydrate": "location,fieldInfo,timezone"},
         timeout=60,
     )
     resp.raise_for_status()
@@ -80,6 +86,8 @@ def fetch_venue(venue_id: int) -> dict | None:
     venue = venues[0]
     field = venue.get("fieldInfo") or {}
     location = venue.get("location") or {}
+    coordinates = location.get("defaultCoordinates") or {}
+    timezone = venue.get("timeZone") or {}
     fences = [field.get(key) for key in FENCE_KEYS]
     if any(distance is None for distance in fences):
         print(f"  skipping venue {venue_id} ({venue.get('name')}): incomplete fences")
@@ -89,6 +97,10 @@ def fetch_venue(venue_id: int) -> dict | None:
         "name": venue.get("name"),
         "elevation_ft": location.get("elevation"),
         "azimuth_degrees": location.get("azimuthAngle"),
+        "latitude": coordinates.get("latitude"),
+        "longitude": coordinates.get("longitude"),
+        "timezone_id": timezone.get("id"),
+        "utc_offset_hours": timezone.get("offset"),
         "roof_type": field.get("roofType"),
         "turf_type": field.get("turfType"),
         "fences_ft": [int(distance) for distance in fences],
@@ -106,7 +118,7 @@ def main(season: int | None = None) -> dict:
     document = {
         "season": season,
         "generated": date.today().isoformat(),
-        "source": "MLB Stats API /venues?hydrate=location,fieldInfo",
+        "source": "MLB Stats API /venues?hydrate=location,fieldInfo,timezone",
         "note": (
             "fences_ft is [leftLine, leftCenter, center, rightCenter, rightLine] "
             "in feet, matching the spray sectors CALC_33 divides the field into. "

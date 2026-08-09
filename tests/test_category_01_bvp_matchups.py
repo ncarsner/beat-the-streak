@@ -107,7 +107,41 @@ def test_parse_bvp_stats_skips_season_split_without_season():
     [{}, {"stats": []}, {"stats": None}, {"stats": [{"type": {}, "splits": []}]}],
 )
 def test_parse_bvp_stats_empty_payloads(payload):
-    assert parse_bvp_stats(payload) == {"career": None, "by_season": {}}
+    """A payload with no recognized stat group is unresolved, not a zero sample.
+
+    None of these four is the API saying "these two have never faced each other",
+    which is a real response with both groups named and empty (below). Treating
+    them as resolved would let CALC_71 report a confident "first meeting" off a
+    malformed response.
+    """
+    assert parse_bvp_stats(payload) == {
+        "career": None,
+        "by_season": {},
+        "resolved": False,
+    }
+
+
+def test_a_never_faced_pair_is_resolved_with_no_career():
+    """The real shape, measured 2026-08-09: HTTP 200, both groups named, both
+    empty. Indistinguishable from a dropped request without `resolved`, and the
+    two are opposite answers for CALC_71.
+    """
+    payload = {
+        "stats": [
+            {"type": {"displayName": "vsPlayer"}, "splits": []},
+            {"type": {"displayName": "vsPlayerTotal"}, "splits": []},
+        ]
+    }
+    assert parse_bvp_stats(payload) == {
+        "career": None,
+        "by_season": {},
+        "resolved": True,
+    }
+
+
+def test_a_faced_pair_is_resolved():
+    bvp = parse_bvp_stats(_vsplayer_payload([_split(season=2026, pa=3, ab=3, h=1)]))
+    assert bvp["resolved"] is True
 
 
 # ---- CALC_01 ----

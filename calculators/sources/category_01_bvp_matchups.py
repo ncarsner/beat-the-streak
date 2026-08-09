@@ -29,8 +29,13 @@ def empty_bvp() -> dict:
 
     A function, not a module constant: the payload nests a mutable dict, and a
     shared instance would let one caller's edit leak into every later lookup.
+
+    ``resolved`` is False here and True on anything `parse_bvp_stats` builds from
+    a real response, including a response saying the pair has never met. Without
+    that flag a dropped request and a first-ever matchup are the same value, and
+    `CALC_71` would report "never faced" with confidence on a network error.
     """
-    return {"career": None, "by_season": {}}
+    return {"career": None, "by_season": {}, "resolved": False}
 
 
 # Statcast pitch fields the Category 1 calculators read. Anything else in the

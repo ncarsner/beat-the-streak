@@ -4,6 +4,7 @@ from datetime import datetime
 
 from calculators import sources
 from calculators.category_01_bvp_matchups import parse_bvp_stats
+from calculators.sources.category_01_bvp_matchups import empty_bvp
 from calculators.sources import (
     attach_category_01,
     fetch_bvp_stats,
@@ -53,13 +54,13 @@ def test_fetch_bvp_stats_request_exception_returns_empty_payload(monkeypatch, ca
         raise requests.ConnectionError("down")
 
     monkeypatch.setattr(requests, "get", boom)
-    assert fetch_bvp_stats(592450, 543037) == {"career": None, "by_season": {}}
+    assert fetch_bvp_stats(592450, 543037) == empty_bvp()
     assert "BvP fetch error" in capsys.readouterr().out
 
 
 def test_fetch_bvp_stats_non_2xx_returns_empty_payload(monkeypatch):
     monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse({}, 503))
-    assert fetch_bvp_stats(592450, 543037) == {"career": None, "by_season": {}}
+    assert fetch_bvp_stats(592450, 543037) == empty_bvp()
 
 
 # ---- attach_category_01 ----
