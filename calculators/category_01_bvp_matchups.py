@@ -27,47 +27,18 @@ from calculators.common import (
     COUNTING_STATS,
     PROBABILITY,
     SEASONS,
+    HARD_HIT_MPH,
+    IN_PLAY,
+    SWING_DESCRIPTIONS,
+    WHIFF_DESCRIPTIONS,
     aggregate_lines,
     apply_window,
     empty_line,
     rate_or_none,
 )
 
-# Statcast `description` value for a pitch the batter put into play.
-IN_PLAY = "hit_into_play"
-
-# Statcast `description` values that mean the batter swung. Anything the bat
-# made contact with counts, fouls included — the denominator of CALC_07 is
-# "total swings", not "swings that could have been hits".
-SWING_DESCRIPTIONS = frozenset(
-    {
-        "swinging_strike",
-        "swinging_strike_blocked",
-        "foul",
-        "foul_tip",
-        "foul_bunt",
-        "bunt_foul_tip",
-        "missed_bunt",
-        IN_PLAY,
-    }
-)
-
-# Swings where the bat missed the ball entirely. `foul_tip` and `foul_bunt` are
-# deliberately excluded: ROADMAP defines CALC_07 as "swings and misses", and a
-# tipped ball is contact even though it is scored a strike.
-WHIFF_DESCRIPTIONS = frozenset(
-    {
-        "swinging_strike",
-        "swinging_strike_blocked",
-        "missed_bunt",
-    }
-)
-
 # Statcast `events` values that end the plate appearance in a strikeout.
 STRIKEOUT_EVENTS = frozenset({"strikeout", "strikeout_double_play"})
-
-# Exit velocity at or above which a batted ball is "hard hit", per Statcast.
-HARD_HIT_MPH = 95.0
 
 
 def parse_bvp_stats(payload: dict[str, Any]) -> dict[str, Any]:

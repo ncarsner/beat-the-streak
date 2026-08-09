@@ -79,6 +79,75 @@ class Rate(NamedTuple):
     denominator: int
 
 
+# ---------------------------------------------------------------------------
+# Statcast pitch `description` vocabulary
+# ---------------------------------------------------------------------------
+#
+# Promoted here after three categories defined the same sets independently
+# (Categories 1, 4, and 8). They agreed on membership at the time of the move,
+# which is the good case and not one to rely on twice.
+
+# The `description` value for a pitch the batter put into play.
+IN_PLAY = "hit_into_play"
+
+# Swings where the bat missed the ball entirely. `foul_tip` and `foul_bunt` are
+# deliberately excluded: a tipped ball is contact even though it is scored a
+# strike, which is why a caught foul tip on strike three is a strikeout by rule
+# rather than a foul ball. Savant counts it as contact and so does this model.
+WHIFF_DESCRIPTIONS = frozenset(
+    {
+        "swinging_strike",
+        "swinging_strike_blocked",
+        "missed_bunt",
+    }
+)
+
+# Contact of any kind, fair or foul, in play or not.
+CONTACT_DESCRIPTIONS = frozenset(
+    {
+        "foul",
+        "foul_tip",
+        "foul_bunt",
+        "bunt_foul_tip",
+        IN_PLAY,
+    }
+)
+
+# Anything the batter offered at. Fouls included: the denominator of a whiff
+# rate is "total swings", not "swings that could have been hits".
+SWING_DESCRIPTIONS = WHIFF_DESCRIPTIONS | CONTACT_DESCRIPTIONS
+
+# Exit velocity at or above which a batted ball is "hard hit", per Statcast.
+HARD_HIT_MPH = 95.0
+
+# `game_type` values for games that are not competitive baseball: spring
+# training, exhibitions, and the All-Star game. Postseason codes are deliberately
+# not enumerated here, so filtering on this set keeps them.
+#
+# This matters more than it looks. Statcast **computes no expected statistics for
+# spring training**: all 13 spring batted balls in the probe frame carried a null
+# `estimated_ba_using_speedangle`, against 1 of 143 in the regular season
+# (2026-08-09). So a category that mixes spring games into a sample gets the
+# worst of both, counting spring plate appearances in a denominator while their
+# expected-stat numerators silently vanish. Spring was 7.8% of the probe batter's
+# pitches and 10.1% of the probe pitcher's.
+#
+# Only `R` and `S` were observed in the two probe frames, so the members beyond
+# `S` are named from the MLB Stats API's documented vocabulary rather than
+# measured here.
+NON_COMPETITIVE_GAME_TYPES = frozenset({"S", "E", "A"})
+
+
+def is_competitive(record: dict[str, Any]) -> bool:
+    """Whether *record* comes from a competitive game.
+
+    A record with no ``game_type`` key is treated as competitive: the column is
+    absent from some field projections, and the alternative would silently empty
+    every rate for any category that has not opted in.
+    """
+    return record.get("game_type") not in NON_COMPETITIVE_GAME_TYPES
+
+
 def terminal_pitch_by_pa(
     pitches: Sequence[dict[str, Any]],
 ) -> list[dict[str, Any]]:

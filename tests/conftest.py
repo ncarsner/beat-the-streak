@@ -262,6 +262,55 @@ _PITCH_TYPE_CODE = {
 }
 
 
+def _form_pitch(
+    game_date="2026-07-01",
+    game_pk=1,
+    game_type="R",
+    at_bat_number=1,
+    pitch_number=1,
+    events=None,
+    description="ball",
+    launch_speed=None,
+    launch_angle=None,
+    xba=None,
+    xwoba=None,
+):
+    """Build one Category 8 pitch record.
+
+    Defaults to a competitive regular-season take, so a test that cares only
+    about dates or events does not have to restate the rest. Pass
+    ``game_type="S"`` for a spring-training row and ``description="hit_into_play"``
+    with a launch reading for a batted ball.
+    """
+    return {
+        "game_date": game_date,
+        "game_pk": game_pk,
+        "game_type": game_type,
+        "at_bat_number": at_bat_number,
+        "pitch_number": pitch_number,
+        "events": events,
+        "description": description,
+        "launch_speed": launch_speed,
+        "launch_angle": launch_angle,
+        "estimated_ba_using_speedangle": xba,
+        "estimated_woba_using_speedangle": xwoba,
+    }
+
+
+def _form_pa(events=None, *, hit=False, **kwargs):
+    """One Category 8 plate appearance, expressed as its single terminal pitch.
+
+    ``hit=True`` is shorthand for a single put in play, the common case in a
+    hit-rate test. Every Category 8 calculator reduces to terminal pitches
+    itself, so a one-pitch plate appearance is a faithful fixture.
+    """
+    if hit and events is None:
+        events = "single"
+    if events in {"single", "double", "triple", "home_run"}:
+        kwargs.setdefault("description", "hit_into_play")
+    return _form_pitch(events=events, **kwargs)
+
+
 # ---- pybaseball stub (shared by source tests) ----
 
 

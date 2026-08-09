@@ -51,11 +51,14 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from calculators.common import (
+    CONTACT_DESCRIPTIONS,
     MULTIPLIER,
     ON_BASE_EVENTS,
     OUT_EVENTS,
     PROBABILITY,
     Rate,
+    SWING_DESCRIPTIONS,
+    WHIFF_DESCRIPTIONS,
     rate_or_none,
     terminal_pitch_by_pa,
 )
@@ -70,31 +73,6 @@ from calculators.common import (
 # `automatic_ball`, `called_strike`, `foul`, `foul_tip`, `foul_bunt`,
 # `swinging_strike`, `swinging_strike_blocked`, `missed_bunt`, `hit_by_pitch`,
 # `pitchout`, and `hit_into_play`.
-
-# A whiff is a swing that touched nothing. `foul_tip` is deliberately excluded:
-# the bat did make contact, which is why a caught foul tip with two strikes is a
-# strikeout by rule rather than a foul ball. Savant counts it as contact and so
-# does this module.
-WHIFF_DESCRIPTIONS = frozenset(
-    {
-        "swinging_strike",
-        "swinging_strike_blocked",
-        "missed_bunt",
-    }
-)
-
-# Contact of any kind, fair or foul, in play or not.
-CONTACT_DESCRIPTIONS = frozenset(
-    {
-        "foul",
-        "foul_tip",
-        "foul_bunt",
-        "bunt_foul_tip",
-        "hit_into_play",
-    }
-)
-
-SWING_DESCRIPTIONS = WHIFF_DESCRIPTIONS | CONTACT_DESCRIPTIONS
 
 CALLED_STRIKE_DESCRIPTIONS = frozenset({"called_strike"})
 
