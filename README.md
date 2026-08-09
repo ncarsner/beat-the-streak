@@ -148,11 +148,13 @@ calculators/
     data/                                # generated reference data, checked in
     category_01_bvp_matchups.py          # CALC_01-08
     category_02_platoon_splits.py        # CALC_09-15
+    category_03_pitch_arsenal.py         # CALC_16-23
     category_06_lineup_game_context.py   # CALC_41
     sources/                             # the only package here that touches the network
         common.py                        #   HTTP + Statcast response cache
         category_01_bvp_matchups.py
         category_02_platoon_splits.py
+        category_03_pitch_arsenal.py
 tests/                                   # mirrors the module layout, one file per module
 scripts/                                 # on-demand generators, never run by the tool
 ```
@@ -323,6 +325,60 @@ hand the effect is plain — each hand hits roughly 10–17 points better agains
 hand. Team-level aggregates cannot produce this, since teams are not split by batter hand.
 
 Switch hitters are excluded; they have no fixed batter hand, and `CALC_13` handles them.
+
+### Pitch arsenal and movement calculators
+
+`category_03_pitch_arsenal.py` implements Category 3 (`CALC_16`–`CALC_23`), entirely from
+Statcast pitch-level columns. Every one of them takes **both** sides of the matchup: the
+starter's rows establish what he throws, the hitter's rows how he fares against that class
+of pitch. The hitter's side is deliberately not restricted to this starter — Category 1
+already owns the head-to-head question and returns nothing when the pair has never met, so
+Category 3 is what still has a sample against a rookie.
+
+| Calculator | Primary key | Secondary key |
+|---|---|---|
+| `CALC_16`/`17`/`18` | hitter xBA on fastballs / breaking / offspeed | `_USAGE`: the starter's share of that class |
+| `CALC_19` | run value per 100 pitches on the starter's top-2 types (`DELTA`, in runs) | — |
+| `CALC_20` | hitter H/PA in the starter's fastball velocity bracket | — |
+| `CALC_21` | hitter H/PA against the starter's fastball approach-angle tier | `_PLANE_MISMATCH`: swing plane vs. pitch plane, in degrees |
+| `CALC_22` | hitter H/PA against extreme horizontal break | `_USAGE`: the starter's share of it |
+| `CALC_23` | hitter H/PA in the starter's release-extension tier | `_VELO_GAIN`: mph that extension buys, `DELTA` |
+
+Three decisions worth knowing before reading the numbers.
+
+**Two keys, not their product.** The ROADMAP writes `CALC_16` as "hitter xBA × pitcher usage
+%", but that product is not a quantity anything can read — a .300 xBA against a starter who
+throws 55% fastballs multiplies to .165, which is neither an expected average nor a usage.
+Both terms survive and `CALC_75` weights them. The three usage shares divide by *typed*
+pitches rather than by their own sum, so they come to slightly under 1 and the unclassified
+residue (pitchouts, intentional balls, the odd eephus — about 0.1% of league pitches) stays
+visible instead of being silently redistributed.
+
+**Terminal-pitch attribution.** Category 2 filters on attributes that hold constant across a
+plate appearance, so it can keep every pitch of one. Category 3 filters on attributes that
+change pitch to pitch — a PA can see a 96 mph fastball and an 84 mph slider — so each PA is
+reduced to the pitch that *ended* it before any tier filter runs. Verified against Statcast:
+the maximum-`pitch_number` row of a PA is exactly the row carrying a terminal `events` value,
+240 of 240 in the probe sample.
+
+**`CALC_21` does not take its value from swing plane.** Statcast's bat-tracking `attack_angle`
+measures it directly and would be the obvious primary, but the column is entirely null before
+2024 and populated only on pitches the batter swung at. A calculator depending on it returns
+`None` across most of any backtest, which is exactly what makes it useless to the validation
+harness. Swing plane is emitted as the secondary `CALC_21_PLANE_MISMATCH` in signed degrees
+(zero means the swing parallels the incoming pitch), and the primary is a hit rate on the
+same probability scale as everything else.
+
+Tier boundaries are measured rather than assumed, against 20,545 pitches seen by 12 regular
+hitters over the 2026 season. Vertical approach angle is solved from the release-point
+velocity and acceleration vectors — Statcast publishes the trajectory terms but not the
+angle — and the solution's sign was validated by the ordering it produces: four-seamers
+flattest at −4.63°, then sinkers, cutters, the breaking balls, and curveballs steepest at
+−9.52°. It is tiered over **fastballs only**, because pooled across pitch types VAA mostly
+measures arsenal mix rather than delivery.
+
+`pfx_x` is in feet; Baseball Savant displays the same quantity in inches. The constant is
+named `EXTREME_PFX_X_FEET` so the 12× error has somewhere to fail loudly.
 
 ### Lineup spot and CALC_41
 

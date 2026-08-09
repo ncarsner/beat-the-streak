@@ -8,6 +8,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## 2026-08-08
 
 ### Added
+- Category 3 pitch-arsenal calculators (`CALC_16`-`CALC_23`) in
+  `calculators/category_03_pitch_arsenal.py`, with source fetchers in
+  `calculators/sources/category_03_pitch_arsenal.py`. Entirely Statcast pitch-level, at the
+  existing pybaseball pin — no new dependency and no new endpoint. Every calculator takes both
+  sides of the matchup; the hitter's side is not restricted to today's starter, which is what
+  gives the category a sample where Category 1 has none.
+- `CALC_16`/`17`/`18` emit two keys each (class xBA and the starter's usage of that class)
+  rather than their product, which is neither an expected average nor a usage. Usage divides
+  by typed pitches, not by the three classes' sum, so the unclassified residue stays visible.
+- `_terminal_pitch_by_pa`: Category 3 filters on attributes that vary within a plate
+  appearance, so each PA is reduced to the pitch that ended it before any tier filter runs.
+  Distinct from Category 2's `_plate_appearances`, which keeps every pitch of a PA because it
+  filters on attributes constant across one.
+- `vertical_approach_angle`, solved from the release-point velocity and acceleration vectors —
+  Statcast publishes the trajectory terms but not the angle. Sign validated by the ordering it
+  produces: four-seamers flattest at -4.63 degrees, curveballs steepest at -9.52.
+- Tier boundaries for velocity, approach angle, horizontal break, and release extension, all
+  measured against 20,545 pitches seen by 12 regular hitters over the 2026 season rather than
+  assumed. `EXTREME_PFX_X_FEET` carries its unit in the name: `pfx_x` is in feet and Savant
+  displays inches.
 - Category 2 platoon/handedness calculators (`CALC_09`-`CALC_15`) in
   `calculators/category_02_platoon_splits.py`, plus `CALC_41` (lineup-spot PA expectation) in
   `calculators/category_06_lineup_game_context.py`.
@@ -38,6 +58,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   is now `SEASONS(3)`. One calculator contract across the package, not two.
 - Documented `uv` as the project's package manager. Nothing on disk recorded it, and
   `requirements.txt` implied pip.
+- `HIT_EVENTS` moved from `category_02_platoon_splits.py` to `calculators/common.py`. Every
+  category that counts hits off pitch-level rows needs the same set, and two copies would
+  eventually disagree. Still imported into Category 2's namespace, so nothing there changes.
 
 ### Fixed
 - A test in the Category 1 source suite patched `fetch_bvp_stats` but not `fetch_bvp_statcast`,
