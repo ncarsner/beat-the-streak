@@ -336,6 +336,12 @@ def calc_14_arm_slot_match(
     Pitches with no `arm_angle` reading are excluded from the denominator rather
     than defaulted — the column only exists from 2024, and a missing reading is
     not a slot.
+
+    **Season-scoped**, like `CALC_05`-`CALC_08`: the source pulls one season of
+    pitches per call. So the breadth this answers over is every pitcher of that
+    slot the hitter faced *this year*, not his career against the slot. That is
+    still far wider than one matchup, which is the point, but it is not the
+    unbounded history the phrase "that class of delivery" might suggest.
     """
     bucket = arm_slot_bucket(starter_arm_angle)
     if bucket is None:

@@ -5,6 +5,7 @@ All tests mock requests.get — no live API call is ever made.
 
 import requests
 
+from calculators.category_02_platoon_splits import _plate_appearances
 from calculators.sources.category_01_bvp_matchups import fetch_bvp_statcast
 from calculators.sources.category_02_platoon_splits import (
     _parse_stat_splits,
@@ -551,3 +552,65 @@ def test_statcast_fetchers_do_not_import_pybaseball_at_module_scope():
             assert all("pybaseball" not in n.name for n in node.names)
         elif isinstance(node, ast.ImportFrom):
             assert "pybaseball" not in (node.module or "")
+
+
+def test_pa_grouping_survives_the_cache_round_trip():
+    """Live-fetched and cache-loaded frames must group into identical PAs.
+
+    `_plate_appearances` keys on the tuple ``(game_pk, at_bat_number)``, and a
+    tuple key is type-sensitive: ``(777001, 12)`` and ``(777001.0, 12.0)`` are
+    different dict entries. Every other Statcast test builds its frame in memory
+    and never round-trips it, so nothing else here would notice if the cache
+    changed a column's dtype and split one plate appearance in two.
+
+    It currently holds for a reason worth stating: pandas picks the dtype from
+    the data, and the data is the same on both paths — no missing value gives
+    int64 both sides, a missing value gives float64 both sides. That is a
+    property of pandas' coercion rules, not of anything this code does, which is
+    exactly why it deserves a test rather than an assumption.
+    """
+    import pathlib
+    import tempfile
+
+    import numpy as np
+    import pandas as pd
+
+    from calculators.sources.category_02_platoon_splits import (
+        CATEGORY_02_PITCH_FIELDS,
+        _normalize_pitches,
+    )
+    from calculators.sources.common import (
+        _read_statcast_cache,
+        _write_statcast_cache,
+    )
+
+    # Two pitches of one PA, plus a row with missing identifiers — which is what
+    # forces the whole column to float64 on the live path.
+    frame = _statcast_frame(
+        [
+            _sc_row(at_bat=12, game_pk=777001),
+            _sc_row(at_bat=12, game_pk=777001, events="single"),
+            _sc_row(at_bat=np.nan, game_pk=np.nan),
+        ]
+    )
+
+    live = _normalize_pitches(frame, CATEGORY_02_PITCH_FIELDS)
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "roundtrip.csv.gz"
+        _write_statcast_cache(path, frame)
+        reloaded = _read_statcast_cache(path)
+        assert reloaded is not None
+        cached = _normalize_pitches(reloaded, CATEGORY_02_PITCH_FIELDS)
+
+    def keys(records):
+        return sorted(
+            (r["game_pk"], r["at_bat_number"])
+            for r in records
+            if r.get("game_pk") is not None and r.get("at_bat_number") is not None
+        )
+
+    assert keys(live) == keys(cached)
+    assert len(_plate_appearances(live)) == len(_plate_appearances(cached)) == 1
+    # And the outcome survives the trip, not just the grouping.
+    assert _plate_appearances(cached)[0]["events"] == "single"
+    assert not any(pd.isna(v) for r in cached for v in r.values() if v is not None)
