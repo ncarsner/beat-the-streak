@@ -29,12 +29,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `zone_code`, which coerces Statcast's `zone` to an int before testing it against the code
   sets. pandas widens the column to float64 to hold nulls and the cache's CSV round-trip
   preserves that, so an uncoerced `5.0 in IN_ZONE_CODES` would match nothing and silently
-  empty every zone-based rate in the category.
+  empty every zone-based rate in the category. The coercion is integrality-checked rather
+  than a plain `int()`: `zone` is categorical, so a 9.7 is not a code that rounds to a
+  neighbor, and truncating it would place a malformed reading inside the strike zone.
 - `CALC_30_COVERAGE`, weighted by the starter's own location distribution rather than counted
   as covered-zones-over-nine. `CALC_30` renormalizes its weighted xBA over the zones where the
   hitter has a batted-ball sample, which is what keeps it on a batting-average scale but also
   makes a partial heatmap look like a full one; coverage is the honest statement of how much
-  of the starter's real distribution the average represents.
+  of the starter's real distribution the average represents. Its denominator is the starter's
+  in-zone pitch count, the sample size behind its own rate, so #34's shrinkage reads it the
+  same way it reads every other `Rate`.
 
 ### Changed
 - `_terminal_pitch_by_pa` moved from `calculators/category_03_pitch_arsenal.py` to
@@ -43,10 +47,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   promoted on 2026-08-08. Category 3's behavior is unchanged.
 
 ### Verified
-- 711 tests passing, ruff format and check clean, zero live network escapes from the suite.
-- Smoke test against real cached Statcast frames for one hitter and one starter: all 14 keys
-  populated, every value independently reproduced from raw pandas, and the zone and out-of-
-  zone rates summing to exactly 1.0.
+- 717 tests passing, ruff format and check clean, zero live network escapes from the suite.
+- Smoke test against real Statcast frames for one hitter and one starter (a live pull, since
+  the current-season cache is date-keyed and the previous day's files had aged out): all 14
+  keys populated, every value independently reproduced from raw pandas over the same frames
+  by a separate script, and the zone and out-of-zone rates summing to exactly 1.0.
 - `main.py` byte-identical, `grep -c calculators main.py` returns 0. Nothing in the package is
   called during a daily run.
 

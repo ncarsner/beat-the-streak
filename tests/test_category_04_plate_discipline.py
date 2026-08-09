@@ -108,9 +108,20 @@ def test_zone_code_coerces_floats_to_ints(raw, expected):
     assert zone_code(_discipline_pitch(zone=raw)) == expected
 
 
-@pytest.mark.parametrize("raw", [None, "", "abc", float("nan"), True, False])
+@pytest.mark.parametrize(
+    "raw", [None, "", "abc", float("nan"), float("inf"), True, False]
+)
 def test_zone_code_returns_none_for_anything_unusable(raw):
     assert zone_code(_discipline_pitch(zone=raw)) is None
+
+
+@pytest.mark.parametrize("raw", [9.7, 5.5, 0.4, -1.2])
+def test_zone_code_rejects_a_non_integral_value_rather_than_truncating(raw):
+    """`zone` is categorical, so 9.7 is not a code that rounds to a neighbor, it
+    is a value the column should never hold. A plain int() would truncate it to 9
+    and place a malformed reading inside the strike zone."""
+    assert zone_code(_discipline_pitch(zone=raw)) is None
+    assert is_in_zone(_discipline_pitch(zone=raw)) is False
 
 
 def test_a_float_zone_still_matches_the_int_code_sets():
@@ -544,7 +555,17 @@ def test_calc_30_coverage_is_weighted_by_the_starters_own_distribution():
     pitcher = [_discipline_pitch(zone=1)] + [_discipline_pitch(zone=9)] * 3
     result = calc_30_quadrant_acuity(hitter, pitcher)
     assert result["CALC_30_COVERAGE"].value.rate == pytest.approx(0.25)
-    assert result["CALC_30_COVERAGE"].value.denominator == 2
+
+
+def test_calc_30_coverage_denominator_is_the_starters_in_zone_pitch_count():
+    """The sample size behind the rate, the way every other Rate in the model
+    carries one, so #34's shrinkage reads it without a special case. The number of
+    distinct zones he touched would be a different quantity in the same slot."""
+    hitter = [_discipline_pitch(zone=1, description="hit_into_play", xba=0.4)]
+    pitcher = [_discipline_pitch(zone=1)] + [_discipline_pitch(zone=9)] * 3
+    pitcher += [_discipline_pitch(zone=13)] * 5  # out of zone, must not count
+    result = calc_30_quadrant_acuity(hitter, pitcher)
+    assert result["CALC_30_COVERAGE"].value.denominator == 4
 
 
 def test_calc_30_reports_coverage_even_when_nothing_overlaps():

@@ -155,14 +155,27 @@ def zone_code(pitch: dict[str, Any]) -> int | None:
     cache's CSV round-trip preserves that. A bare ``pitch["zone"] in
     IN_ZONE_CODES`` test would then compare 5.0 against a set of ints and match
     nothing, silently emptying every zone-based rate in the category.
+
+    The coercion is integrality-checked rather than a plain ``int()``, which
+    truncates. `zone` is categorical, so 9.7 is not a zone that rounds to a
+    neighbor, it is a value this column should never hold; truncating it to 9
+    would place a malformed reading inside the strike zone and let it into a rate.
+    A non-integral value is no reading at all.
+
+    Duck-typed rather than ``isinstance(raw, (int, float))`` on purpose: numpy's
+    ``int64`` is not a subclass of Python's ``int``, and the source modules do not
+    unwrap numpy scalars, so a type check would reject the ordinary case.
+    ``OverflowError`` is caught alongside the rest because ``int(inf)`` raises it
+    where ``int(nan)`` raises ``ValueError``.
     """
     raw = pitch.get("zone")
     if raw is None or isinstance(raw, bool):
         return None
     try:
-        return int(raw)
-    except (TypeError, ValueError):
+        code = int(raw)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return code if code == raw else None
 
 
 def is_in_zone(pitch: dict[str, Any]) -> bool:
@@ -533,17 +546,23 @@ def calc_30_quadrant_acuity(
     counted as covered-zones-over-nine, because missing the zone he pounds is not
     the same problem as missing one he never touches.
 
-    `CALC_30`'s denominator is the total batted balls behind it, so shrinkage has
-    a sample size to work with.
+    Both denominators are the sample size behind their own rate, the way every
+    other `Rate` in the model carries one, so #34's shrinkage can read them
+    without a special case. `CALC_30`'s is the total batted balls the weighted
+    average was computed from. `CALC_30_COVERAGE`'s is the starter's in-zone pitch
+    count, because coverage is a share of *his pitches*; the number of distinct
+    zones he happened to touch would be a different quantity wearing the same
+    slot.
     """
     zone_xba = hitter_zone_xba(hitter_pitches)
     weights = pitcher_zone_weights(pitcher_pitches)
     if not zone_xba or not weights:
         return {"CALC_30": None, "CALC_30_COVERAGE": None}
 
+    in_zone_pitches = sum(1 for p in pitcher_pitches if is_in_zone(p))
     covered = weights.keys() & zone_xba.keys()
     covered_weight = sum(weights[code] for code in covered)
-    coverage = Rate(covered_weight, len(weights))
+    coverage = Rate(covered_weight, in_zone_pitches)
     if not covered_weight:
         return {"CALC_30": None, "CALC_30_COVERAGE": MULTIPLIER(coverage)}
 
