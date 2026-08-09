@@ -152,7 +152,7 @@ calculators/
     category_03_pitch_arsenal.py         # CALC_16-23
     category_04_plate_discipline.py      # CALC_24-30
     category_05_ballpark_environment.py  # CALC_31-40
-    category_06_lineup_game_context.py   # CALC_41
+    category_06_lineup_game_context.py   # CALC_41-46
     category_08_batter_form.py           # CALC_52-59
     category_09_pitcher_form.py          # CALC_60-65
     sources/                             # the only package here that touches the network
@@ -162,6 +162,7 @@ calculators/
         category_03_pitch_arsenal.py
         category_04_plate_discipline.py
         category_05_ballpark_environment.py
+        category_06_lineup_game_context.py
         category_08_batter_form.py
         category_09_pitcher_form.py
 tests/                                   # mirrors the module layout, one file per module
@@ -638,12 +639,66 @@ is computed from `CALC_34`'s temperature. And `CALC_34`, `CALC_35`, and `CALC_39
 denominator of 1 that is **not** a sample size, the same shape as `CALC_64`'s rest days;
 `CALC_33` and `CALC_36` carry the real tracked air-ball count.
 
-### Lineup spot and CALC_41
+### Lineup and game-context calculators
+
+`category_06_lineup_game_context.py` implements Category 6 (`CALC_41`-`CALC_46`). This is
+where quantities that change **how many plate appearances a hitter gets, and against whom**
+live, which is why it owns the model's only two `EXPONENT` calculators.
 
 `fetch_lineup` carries each player's `lineup_spot`, decoded from the boxscore's 3-digit
 `battingOrder` encoding (`"100"` = spot 1, `"101"` = the first substitute batting there, so
 `int(v) // 100` recovers the spot). `CALC_41` projects plate appearances from it across the
 ROADMAP's 4.6-to-3.7 range, with role `EXPONENT` — it feeds `PA_proj`, never `p_hit`.
+
+| Calculator | Value | Role |
+|---|---|---|
+| `CALC_41` | projected PAs from the batting-order spot | `EXPONENT` |
+| `CALC_42` | preceding hitter's OBP | `MULTIPLIER` |
+| `CALC_43` | on-deck hitter's OPS, plus `_SLG` | `MULTIPLIER` |
+| `CALC_44` | `_PITCHER_TTO1/2/3`, `_BATTER_TTO1/2/3`, `_PENALTY` | `PROBABILITY` / `DELTA` |
+| `CALC_45` | expected PAs lost to a skipped bottom 9th | `EXPONENT` |
+| `CALC_46` | run total vs. league mean | `MULTIPLIER`, always `None` today |
+
+`CALC_42` and `CALC_43` read a *different* hitter's line than the one being evaluated, so
+`fetch_lineup_rates` resolves a whole batting order's season OBP/SLG/OPS in one hydrated
+`/people` request rather than fetching each line twice as its neighbours come up. Both wrap at
+the ends of the order: the hitter before the leadoff man is the ninth hitter.
+
+**Times through the order is reconstructed, and the rule does not transfer between the two
+sides.** Statcast publishes no TTO column and there is no situation code for it either.
+Category 9's start test — earliest plate appearance in inning 1 with nobody out — works on a
+pitcher's frame, which holds every batter he faced. It does **not** work on a batter's frame,
+which holds only plate appearances involving that batter, so a pitcher's earliest row in it is
+the first time he faced *this hitter*, usually the second inning or later. Applying it anyway
+classified 35 of a probe hitter's 261 plate appearances as facing a starter, against a true
+share near 60 percent. The batter side instead takes the starter to be whoever the hitter
+faced in his own first plate appearance of the game, guarded to inning 3 so a pinch hitter
+debuting in the ninth cannot crown a reliever.
+
+Relief outings are dropped from the pitcher side for a related reason: every plate appearance
+of a relief outing lands in bucket 1, since a reliever rarely faces the same hitter twice, and
+keeping them drags bucket 1 toward bullpen quality. Buckets count repeat encounters with the
+same batter rather than `ceil(index / 9)`; the two agree on 98.9 percent of the probe pitcher's
+440 plate appearances and every disagreement is a substitution.
+
+**The batter leg runs the opposite way from the pitcher leg, and that is a confound rather than
+a finding.** A hitter only reaches bucket 3 when the starter lasted long enough, so batter-side
+rates fall across buckets (.254/.148/.136) while the pitcher side rises (.251/.270/.337, a
++.085 penalty). Read the batter leg as "how this hitter does against a starter who has lasted".
+
+`CALC_45` turns the ROADMAP's conditional "home hitters lose 0.5 PA if leading in the 9th" into
+the unconditional expectation a projection needs, since at pick time nobody knows who will be
+ahead. The skip rate is measured rather than assumed — 780 of 1,761 completed regular-season
+games reaching nine innings, 44.29 percent — and lives in
+`calculators/data/league_game_context.json`. Unlike every other league-reference constant in
+this repo it is a genuine census, from the Stats API schedule rather than the broken bulk
+Statcast pull, so it does not inherit #38. A road hitter returns exactly 0.0: the top of the
+ninth is always played.
+
+`CALC_46` returns `None` in every current code path. Neither a betting market's run total nor
+the league mean of such totals is reachable, and defaulting that mean to a plausible-looking
+8.5 would be the constant-from-nowhere `CALC_34` refused to invent. It ships as a signature so
+the shape is recorded and an odds feed plugs straight in.
 
 **Nothing in `calculators/` is called during a run.** No BvP, handedness, or Statcast request
 is made, `binomial_probability` still computes its exponent as `pa / 5`, and the ranked table

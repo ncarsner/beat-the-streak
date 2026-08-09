@@ -5,6 +5,85 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-09 (Category 6 completion)
+
+### Added
+- `CALC_42`-`CALC_46` in `calculators/category_06_lineup_game_context.py`, completing the
+  category around the `CALC_41` that shipped alone earlier, with the source fetchers in
+  `calculators/sources/category_06_lineup_game_context.py`.
+- `fetch_lineup_rates`, which resolves a whole batting order's season OBP/SLG/OPS in **one**
+  hydrated `/people` request. That batching is what makes `CALC_42` and `CALC_43` cheap: each
+  needs a *different* hitter's line than the one being evaluated, so per-player fetching would
+  pull every line in the order twice.
+- `calculators/data/league_game_context.json` and `scripts/generate_league_game_context.py`,
+  the measured rate at which the home team never bats in the bottom of the ninth.
+
+### Notes
+- **Category 9's start test does not transfer to a batter frame, and reusing it silently
+  destroys the sample.** That test asks whether a pitcher's earliest plate appearance in a game
+  came in inning 1 with nobody out. A *pitcher's* frame holds every batter he faced, so it
+  works there. A *batter's* frame holds only plate appearances involving that batter, so a
+  pitcher's earliest row in it is the first time he faced *this hitter*, which for a starter is
+  usually the second inning or later. Applying it anyway classified 35 of a probe hitter's 261
+  plate appearances as facing a starter, against a true share near 60 percent. The batter side
+  instead identifies the starter as whoever the hitter faced in **his own first plate appearance
+  of the game**, guarded to inning 3 so a pinch hitter debuting in the ninth cannot crown a
+  reliever. Measured across two probe hitters, the first plate appearance fell in inning 1 in
+  170 of 171 games, the single exception being exactly such an appearance, and the surviving
+  share of plate appearances was 60 and 61 percent.
+- **Relief outings are dropped from the pitcher side**, for a related reason: every plate
+  appearance of a relief outing lands in bucket 1, since a reliever rarely faces the same hitter
+  twice. Keeping them would drag bucket 1 toward bullpen quality and inflate the apparent
+  times-through-order penalty.
+- **Buckets count repeat encounters with the same batter**, not `ceil(index / 9)`. The two agree
+  on 98.9 percent of the probe pitcher's 440 plate appearances, and every one of the 5
+  disagreements is a substitution, where counting encounters is right and counting lineup passes
+  is wrong.
+- **The batter leg carries a survivorship confound the pitcher leg does not, and it runs the
+  opposite way.** A hitter only reaches bucket 3 when the starter was going well enough to still
+  be in the game, so batter-side rates *fall* across buckets (.254/.148/.136 and .225/.214/.193
+  on the two probe hitters) while the pitcher side rises (.251/.270/.337, a +.085 penalty). Read
+  the batter leg as "how this hitter does against a starter who has lasted", not as his own
+  fatigue curve.
+- **`CALC_45`'s skip rate is measured, not assumed.** The ROADMAP states the loss conditionally,
+  as 0.5 plate appearances when the home team leads, and a projection cannot condition on that
+  because at pick time nobody knows who will be ahead. The unconditional expectation multiplies
+  it by how often the home half is never played: 780 of 1,761 completed regular-season games
+  reaching nine innings, 44.29 percent. **Unlike every other league-reference constant in this
+  repo this one is a genuine league census**, from the Stats API schedule rather than the broken
+  bulk `pybaseball.statcast()` pull, so it does not inherit #38. The ranged request's total was
+  cross-checked against a day-by-day sum over 136 separate requests, identical on both counts,
+  because a silently truncated large response has burned this project before (see
+  `LEADERBOARD_LIMIT` in `generate_league_platoon_baseline.py`).
+- **`CALC_45` is deliberately not spot-dependent**, unlike `CALC_41` in the same module. A
+  skipped ninth removes roughly one lineup turn's worth of plate appearances, and which spots
+  lose them depends on where the order stands after eight innings, which is close to uniform
+  across games. A road hitter returns exactly 0.0, a measurement rather than a missing value:
+  the top of the ninth is always played.
+- **`CALC_42` models one of the two mechanisms the ROADMAP names.** "Pitcher forced into stretch"
+  acts on this hitter's chance of a hit and is what the value reports; "more PAs" is a
+  team-level effect on how deep the lineup bats, which belongs to the `PA_proj` lane this module
+  already owns through `CALC_41` and `CALC_45`. Reporting the same on-base number under both
+  lanes would invite the composite model to count it twice.
+- **`CALC_43` emits both OPS and slugging**, since the ROADMAP says "threat" without defining it
+  and both arrive in the same response. Slugging alone is arguably the better read of protection,
+  since a pitcher fears extra-base damage rather than walks, so #39 rules on which is used. Same
+  shape as `CALC_06` and `CALC_55`.
+- **`CALC_46` returns None in every current code path, and that is the honest state.** Neither
+  a betting market's run total nor the league mean of such totals is reachable: no source
+  available here publishes betting lines, and there is no mean to be had of a quantity that
+  cannot be fetched. It ships as a signature so the shape is recorded and an odds feed plugs
+  straight in. Defaulting the league mean to a plausible-looking 8.5 would be exactly the
+  constant-from-nowhere `CALC_34` refused to invent.
+- One pre-existing test pinned `compute_category_06` to exactly `{"CALC_41": None}`. That
+  contract widened legitimately, so it now asserts the `CALC_41` key's presence and value rather
+  than the whole mapping, with the full key set covered in the new module.
+- Unwired as always: `main.py` byte-identical, no Category 6 request made during a run.
+  1199 tests passing, up from 1085. Every smoke-test value independently reproduced from raw
+  pandas.
+
+---
+
 ## 2026-08-09 (Category 5)
 
 ### Added
