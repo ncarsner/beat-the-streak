@@ -1,0 +1,915 @@
+{
+  "year": 2026,
+  "year_range": "2024-2026",
+  "years_rolling": 3,
+  "generated": "2026-08-09",
+  "source": "https://baseballsavant.mlb.com/leaderboard/statcast-park-factors (embedded leaderboard JSON)",
+  "note": "Index convention: 100 is league-neutral. Keyed by MLB venue id, which Savant's venue_id matches. The rolling window includes the in-progress season, so this is a snapshot of a moving quantity: regenerate periodically, and read `year_range` before trusting it. The `roof_closed` grouping covers only retractable and domed parks; Savant publishes no working roof-open grouping.",
+  "venues": {
+    "2": {
+      "name": "Oriole Park at Camden Yards",
+      "groupings": {
+        "All": {
+          "n_pa": 52026,
+          "index_hits": 104,
+          "index_1b": 103,
+          "index_2b": 101,
+          "index_3b": 111,
+          "index_hr": 110
+        },
+        "L": {
+          "n_pa": 25099,
+          "index_hits": 103,
+          "index_1b": 102,
+          "index_2b": 97,
+          "index_3b": 89,
+          "index_hr": 120
+        },
+        "R": {
+          "n_pa": 26926,
+          "index_hits": 104,
+          "index_1b": 104,
+          "index_2b": 104,
+          "index_3b": 154,
+          "index_hr": 100
+        }
+      }
+    },
+    "12": {
+      "name": "Tropicana Field",
+      "groupings": {
+        "All": {
+          "n_pa": 31614,
+          "index_hits": 97,
+          "index_1b": 96,
+          "index_2b": 97,
+          "index_3b": 109,
+          "index_hr": 104
+        },
+        "L": {
+          "n_pa": 13620,
+          "index_hits": 93,
+          "index_1b": 95,
+          "index_2b": 89,
+          "index_3b": 94,
+          "index_hr": 91
+        },
+        "R": {
+          "n_pa": 17994,
+          "index_hits": 100,
+          "index_1b": 96,
+          "index_2b": 102,
+          "index_3b": 128,
+          "index_hr": 115
+        },
+        "roof_closed": {
+          "n_pa": 31614,
+          "index_hits": 97,
+          "index_1b": 96,
+          "index_2b": 97,
+          "index_3b": 109,
+          "index_hr": 104
+        }
+      }
+    },
+    "2889": {
+      "name": "Busch Stadium",
+      "groupings": {
+        "All": {
+          "n_pa": 49544,
+          "index_hits": 102,
+          "index_1b": 107,
+          "index_2b": 106,
+          "index_3b": 73,
+          "index_hr": 75
+        },
+        "L": {
+          "n_pa": 22353,
+          "index_hits": 100,
+          "index_1b": 107,
+          "index_2b": 104,
+          "index_3b": 69,
+          "index_hr": 72
+        },
+        "R": {
+          "n_pa": 27190,
+          "index_hits": 103,
+          "index_1b": 107,
+          "index_2b": 108,
+          "index_3b": 78,
+          "index_hr": 78
+        }
+      }
+    },
+    "3312": {
+      "name": "Target Field",
+      "groupings": {
+        "All": {
+          "n_pa": 50538,
+          "index_hits": 104,
+          "index_1b": 103,
+          "index_2b": 112,
+          "index_3b": 92,
+          "index_hr": 95
+        },
+        "L": {
+          "n_pa": 23505,
+          "index_hits": 102,
+          "index_1b": 104,
+          "index_2b": 103,
+          "index_3b": 83,
+          "index_hr": 93
+        },
+        "R": {
+          "n_pa": 27031,
+          "index_hits": 105,
+          "index_1b": 102,
+          "index_2b": 120,
+          "index_3b": 105,
+          "index_hr": 97
+        }
+      }
+    },
+    "2392": {
+      "name": "Daikin Park",
+      "groupings": {
+        "All": {
+          "n_pa": 49746,
+          "index_hits": 99,
+          "index_1b": 97,
+          "index_2b": 96,
+          "index_3b": 76,
+          "index_hr": 114
+        },
+        "L": {
+          "n_pa": 17955,
+          "index_hits": 99,
+          "index_1b": 98,
+          "index_2b": 89,
+          "index_3b": 62,
+          "index_hr": 122
+        },
+        "R": {
+          "n_pa": 31791,
+          "index_hits": 99,
+          "index_1b": 97,
+          "index_2b": 100,
+          "index_3b": 90,
+          "index_hr": 108
+        },
+        "roof_closed": {
+          "n_pa": 49561,
+          "index_hits": 99,
+          "index_1b": 97,
+          "index_2b": 96,
+          "index_3b": 76,
+          "index_hr": 113
+        }
+      }
+    },
+    "3309": {
+      "name": "Nationals Park",
+      "groupings": {
+        "All": {
+          "n_pa": 50460,
+          "index_hits": 104,
+          "index_1b": 106,
+          "index_2b": 98,
+          "index_3b": 97,
+          "index_hr": 104
+        },
+        "L": {
+          "n_pa": 24939,
+          "index_hits": 105,
+          "index_1b": 107,
+          "index_2b": 99,
+          "index_3b": 97,
+          "index_hr": 109
+        },
+        "R": {
+          "n_pa": 25521,
+          "index_hits": 102,
+          "index_1b": 104,
+          "index_2b": 97,
+          "index_3b": 95,
+          "index_hr": 98
+        }
+      }
+    },
+    "4169": {
+      "name": "loanDepot park",
+      "groupings": {
+        "All": {
+          "n_pa": 50919,
+          "index_hits": 100,
+          "index_1b": 101,
+          "index_2b": 105,
+          "index_3b": 135,
+          "index_hr": 87
+        },
+        "L": {
+          "n_pa": 23024,
+          "index_hits": 103,
+          "index_1b": 105,
+          "index_2b": 101,
+          "index_3b": 131,
+          "index_hr": 93
+        },
+        "R": {
+          "n_pa": 27895,
+          "index_hits": 98,
+          "index_1b": 98,
+          "index_2b": 108,
+          "index_3b": 141,
+          "index_hr": 81
+        },
+        "roof_closed": {
+          "n_pa": 44355,
+          "index_hits": 101,
+          "index_1b": 101,
+          "index_2b": 105,
+          "index_3b": 143,
+          "index_hr": 90
+        }
+      }
+    },
+    "31": {
+      "name": "PNC Park",
+      "groupings": {
+        "All": {
+          "n_pa": 51009,
+          "index_hits": 102,
+          "index_1b": 103,
+          "index_2b": 117,
+          "index_3b": 77,
+          "index_hr": 83
+        },
+        "L": {
+          "n_pa": 21822,
+          "index_hits": 104,
+          "index_1b": 98,
+          "index_2b": 130,
+          "index_3b": 75,
+          "index_hr": 97
+        },
+        "R": {
+          "n_pa": 29187,
+          "index_hits": 101,
+          "index_1b": 106,
+          "index_2b": 108,
+          "index_3b": 78,
+          "index_hr": 71
+        }
+      }
+    },
+    "1": {
+      "name": "Angel Stadium",
+      "groupings": {
+        "All": {
+          "n_pa": 49508,
+          "index_hits": 98,
+          "index_1b": 99,
+          "index_2b": 92,
+          "index_3b": 89,
+          "index_hr": 103
+        },
+        "L": {
+          "n_pa": 18202,
+          "index_hits": 97,
+          "index_1b": 98,
+          "index_2b": 93,
+          "index_3b": 84,
+          "index_hr": 96
+        },
+        "R": {
+          "n_pa": 31305,
+          "index_hits": 98,
+          "index_1b": 99,
+          "index_2b": 92,
+          "index_3b": 95,
+          "index_hr": 107
+        }
+      }
+    },
+    "15": {
+      "name": "Chase Field",
+      "groupings": {
+        "All": {
+          "n_pa": 50226,
+          "index_hits": 105,
+          "index_1b": 103,
+          "index_2b": 113,
+          "index_3b": 205,
+          "index_hr": 92
+        },
+        "L": {
+          "n_pa": 23236,
+          "index_hits": 104,
+          "index_1b": 104,
+          "index_2b": 111,
+          "index_3b": 207,
+          "index_hr": 77
+        },
+        "R": {
+          "n_pa": 26990,
+          "index_hits": 106,
+          "index_1b": 102,
+          "index_2b": 114,
+          "index_3b": 200,
+          "index_hr": 106
+        },
+        "roof_closed": {
+          "n_pa": 40697,
+          "index_hits": 106,
+          "index_1b": 105,
+          "index_2b": 110,
+          "index_3b": 215,
+          "index_hr": 91
+        }
+      }
+    },
+    "3313": {
+      "name": "Yankee Stadium",
+      "groupings": {
+        "All": {
+          "n_pa": 52350,
+          "index_hits": 95,
+          "index_1b": 91,
+          "index_2b": 95,
+          "index_3b": 69,
+          "index_hr": 118
+        },
+        "L": {
+          "n_pa": 25381,
+          "index_hits": 95,
+          "index_1b": 90,
+          "index_2b": 96,
+          "index_3b": 58,
+          "index_hr": 120
+        },
+        "R": {
+          "n_pa": 26970,
+          "index_hits": 96,
+          "index_1b": 92,
+          "index_2b": 93,
+          "index_3b": 86,
+          "index_hr": 116
+        }
+      }
+    },
+    "5": {
+      "name": "Progressive Field",
+      "groupings": {
+        "All": {
+          "n_pa": 50080,
+          "index_hits": 99,
+          "index_1b": 100,
+          "index_2b": 103,
+          "index_3b": 64,
+          "index_hr": 94
+        },
+        "L": {
+          "n_pa": 27951,
+          "index_hits": 99,
+          "index_1b": 99,
+          "index_2b": 101,
+          "index_3b": 58,
+          "index_hr": 101
+        },
+        "R": {
+          "n_pa": 22127,
+          "index_hits": 99,
+          "index_1b": 100,
+          "index_2b": 107,
+          "index_3b": 76,
+          "index_hr": 84
+        }
+      }
+    },
+    "2681": {
+      "name": "Citizens Bank Park",
+      "groupings": {
+        "All": {
+          "n_pa": 50647,
+          "index_hits": 102,
+          "index_1b": 102,
+          "index_2b": 96,
+          "index_3b": 104,
+          "index_hr": 114
+        },
+        "L": {
+          "n_pa": 22493,
+          "index_hits": 102,
+          "index_1b": 98,
+          "index_2b": 96,
+          "index_3b": 85,
+          "index_hr": 130
+        },
+        "R": {
+          "n_pa": 28154,
+          "index_hits": 103,
+          "index_1b": 105,
+          "index_2b": 96,
+          "index_3b": 127,
+          "index_hr": 100
+        }
+      }
+    },
+    "3": {
+      "name": "Fenway Park",
+      "groupings": {
+        "All": {
+          "n_pa": 51012,
+          "index_hits": 104,
+          "index_1b": 105,
+          "index_2b": 119,
+          "index_3b": 85,
+          "index_hr": 86
+        },
+        "L": {
+          "n_pa": 23541,
+          "index_hits": 105,
+          "index_1b": 101,
+          "index_2b": 138,
+          "index_3b": 86,
+          "index_hr": 83
+        },
+        "R": {
+          "n_pa": 27471,
+          "index_hits": 104,
+          "index_1b": 107,
+          "index_2b": 104,
+          "index_3b": 84,
+          "index_hr": 90
+        }
+      }
+    },
+    "19": {
+      "name": "Coors Field",
+      "groupings": {
+        "All": {
+          "n_pa": 51388,
+          "index_hits": 117,
+          "index_1b": 115,
+          "index_2b": 123,
+          "index_3b": 209,
+          "index_hr": 109
+        },
+        "L": {
+          "n_pa": 21835,
+          "index_hits": 117,
+          "index_1b": 113,
+          "index_2b": 119,
+          "index_3b": 202,
+          "index_hr": 116
+        },
+        "R": {
+          "n_pa": 29553,
+          "index_hits": 118,
+          "index_1b": 116,
+          "index_2b": 125,
+          "index_3b": 219,
+          "index_hr": 104
+        }
+      }
+    },
+    "2394": {
+      "name": "Comerica Park",
+      "groupings": {
+        "All": {
+          "n_pa": 49329,
+          "index_hits": 100,
+          "index_1b": 101,
+          "index_2b": 92,
+          "index_3b": 147,
+          "index_hr": 101
+        },
+        "L": {
+          "n_pa": 22591,
+          "index_hits": 101,
+          "index_1b": 101,
+          "index_2b": 90,
+          "index_3b": 205,
+          "index_hr": 98
+        },
+        "R": {
+          "n_pa": 26738,
+          "index_hits": 99,
+          "index_1b": 100,
+          "index_2b": 94,
+          "index_3b": 72,
+          "index_hr": 105
+        }
+      }
+    },
+    "2395": {
+      "name": "Oracle Park",
+      "groupings": {
+        "All": {
+          "n_pa": 49357,
+          "index_hits": 101,
+          "index_1b": 103,
+          "index_2b": 105,
+          "index_3b": 138,
+          "index_hr": 78
+        },
+        "L": {
+          "n_pa": 21483,
+          "index_hits": 101,
+          "index_1b": 103,
+          "index_2b": 107,
+          "index_3b": 138,
+          "index_hr": 73
+        },
+        "R": {
+          "n_pa": 27874,
+          "index_hits": 101,
+          "index_1b": 103,
+          "index_2b": 104,
+          "index_3b": 139,
+          "index_hr": 83
+        }
+      }
+    },
+    "2680": {
+      "name": "Petco Park",
+      "groupings": {
+        "All": {
+          "n_pa": 50468,
+          "index_hits": 96,
+          "index_1b": 97,
+          "index_2b": 87,
+          "index_3b": 73,
+          "index_hr": 105
+        },
+        "L": {
+          "n_pa": 22291,
+          "index_hits": 94,
+          "index_1b": 97,
+          "index_2b": 89,
+          "index_3b": 78,
+          "index_hr": 92
+        },
+        "R": {
+          "n_pa": 28177,
+          "index_hits": 97,
+          "index_1b": 98,
+          "index_2b": 86,
+          "index_3b": 66,
+          "index_hr": 115
+        }
+      }
+    },
+    "14": {
+      "name": "Rogers Centre",
+      "groupings": {
+        "All": {
+          "n_pa": 52354,
+          "index_hits": 101,
+          "index_1b": 100,
+          "index_2b": 104,
+          "index_3b": 72,
+          "index_hr": 107
+        },
+        "L": {
+          "n_pa": 22251,
+          "index_hits": 98,
+          "index_1b": 94,
+          "index_2b": 109,
+          "index_3b": 73,
+          "index_hr": 106
+        },
+        "R": {
+          "n_pa": 30103,
+          "index_hits": 103,
+          "index_1b": 104,
+          "index_2b": 101,
+          "index_3b": 71,
+          "index_hr": 109
+        },
+        "roof_closed": {
+          "n_pa": 28083,
+          "index_hits": 101,
+          "index_1b": 100,
+          "index_2b": 104,
+          "index_3b": 67,
+          "index_hr": 102
+        }
+      }
+    },
+    "17": {
+      "name": "Wrigley Field",
+      "groupings": {
+        "All": {
+          "n_pa": 51266,
+          "index_hits": 95,
+          "index_1b": 98,
+          "index_2b": 79,
+          "index_3b": 121,
+          "index_hr": 102
+        },
+        "L": {
+          "n_pa": 21907,
+          "index_hits": 98,
+          "index_1b": 100,
+          "index_2b": 83,
+          "index_3b": 136,
+          "index_hr": 102
+        },
+        "R": {
+          "n_pa": 29359,
+          "index_hits": 93,
+          "index_1b": 96,
+          "index_2b": 76,
+          "index_3b": 102,
+          "index_hr": 103
+        }
+      }
+    },
+    "2602": {
+      "name": "Great American Ball Park",
+      "groupings": {
+        "All": {
+          "n_pa": 50217,
+          "index_hits": 98,
+          "index_1b": 94,
+          "index_2b": 100,
+          "index_3b": 76,
+          "index_hr": 116
+        },
+        "L": {
+          "n_pa": 19890,
+          "index_hits": 100,
+          "index_1b": 97,
+          "index_2b": 97,
+          "index_3b": 86,
+          "index_hr": 122
+        },
+        "R": {
+          "n_pa": 30326,
+          "index_hits": 97,
+          "index_1b": 93,
+          "index_2b": 102,
+          "index_3b": 63,
+          "index_hr": 113
+        }
+      }
+    },
+    "680": {
+      "name": "T-Mobile Park",
+      "groupings": {
+        "All": {
+          "n_pa": 49500,
+          "index_hits": 90,
+          "index_1b": 90,
+          "index_2b": 87,
+          "index_3b": 36,
+          "index_hr": 98
+        },
+        "L": {
+          "n_pa": 24312,
+          "index_hits": 91,
+          "index_1b": 92,
+          "index_2b": 90,
+          "index_3b": 32,
+          "index_hr": 97
+        },
+        "R": {
+          "n_pa": 25188,
+          "index_hits": 88,
+          "index_1b": 88,
+          "index_2b": 84,
+          "index_3b": 42,
+          "index_hr": 99
+        },
+        "roof_closed": {
+          "n_pa": 9615,
+          "index_hits": 90,
+          "index_1b": 86,
+          "index_2b": 103,
+          "index_3b": 63,
+          "index_hr": 95
+        }
+      }
+    },
+    "4705": {
+      "name": "Truist Park",
+      "groupings": {
+        "All": {
+          "n_pa": 50355,
+          "index_hits": 102,
+          "index_1b": 104,
+          "index_2b": 96,
+          "index_3b": 87,
+          "index_hr": 99
+        },
+        "L": {
+          "n_pa": 22278,
+          "index_hits": 101,
+          "index_1b": 104,
+          "index_2b": 91,
+          "index_3b": 77,
+          "index_hr": 105
+        },
+        "R": {
+          "n_pa": 28077,
+          "index_hits": 102,
+          "index_1b": 104,
+          "index_2b": 99,
+          "index_3b": 100,
+          "index_hr": 94
+        }
+      }
+    },
+    "32": {
+      "name": "American Family Field",
+      "groupings": {
+        "All": {
+          "n_pa": 51900,
+          "index_hits": 95,
+          "index_1b": 95,
+          "index_2b": 87,
+          "index_3b": 90,
+          "index_hr": 103
+        },
+        "L": {
+          "n_pa": 22989,
+          "index_hits": 94,
+          "index_1b": 97,
+          "index_2b": 84,
+          "index_3b": 111,
+          "index_hr": 93
+        },
+        "R": {
+          "n_pa": 28911,
+          "index_hits": 95,
+          "index_1b": 94,
+          "index_2b": 90,
+          "index_3b": 60,
+          "index_hr": 110
+        },
+        "roof_closed": {
+          "n_pa": 26873,
+          "index_hits": 93,
+          "index_1b": 95,
+          "index_2b": 82,
+          "index_3b": 92,
+          "index_hr": 100
+        }
+      }
+    },
+    "4": {
+      "name": "Rate Field",
+      "groupings": {
+        "All": {
+          "n_pa": 50301,
+          "index_hits": 97,
+          "index_1b": 99,
+          "index_2b": 94,
+          "index_3b": 73,
+          "index_hr": 95
+        },
+        "L": {
+          "n_pa": 22571,
+          "index_hits": 96,
+          "index_1b": 96,
+          "index_2b": 90,
+          "index_3b": 90,
+          "index_hr": 103
+        },
+        "R": {
+          "n_pa": 27730,
+          "index_hits": 99,
+          "index_1b": 102,
+          "index_2b": 97,
+          "index_3b": 53,
+          "index_hr": 88
+        }
+      }
+    },
+    "3289": {
+      "name": "Citi Field",
+      "groupings": {
+        "All": {
+          "n_pa": 52799,
+          "index_hits": 96,
+          "index_1b": 96,
+          "index_2b": 94,
+          "index_3b": 78,
+          "index_hr": 101
+        },
+        "L": {
+          "n_pa": 23715,
+          "index_hits": 98,
+          "index_1b": 100,
+          "index_2b": 96,
+          "index_3b": 72,
+          "index_hr": 94
+        },
+        "R": {
+          "n_pa": 29084,
+          "index_hits": 94,
+          "index_1b": 93,
+          "index_2b": 93,
+          "index_3b": 86,
+          "index_hr": 106
+        }
+      }
+    },
+    "7": {
+      "name": "Kauffman Stadium",
+      "groupings": {
+        "All": {
+          "n_pa": 49286,
+          "index_hits": 104,
+          "index_1b": 101,
+          "index_2b": 119,
+          "index_3b": 166,
+          "index_hr": 86
+        },
+        "L": {
+          "n_pa": 21679,
+          "index_hits": 105,
+          "index_1b": 103,
+          "index_2b": 123,
+          "index_3b": 178,
+          "index_hr": 77
+        },
+        "R": {
+          "n_pa": 27606,
+          "index_hits": 103,
+          "index_1b": 100,
+          "index_2b": 116,
+          "index_3b": 153,
+          "index_hr": 93
+        }
+      }
+    },
+    "5325": {
+      "name": "Globe Life Field",
+      "groupings": {
+        "All": {
+          "n_pa": 49670,
+          "index_hits": 95,
+          "index_1b": 96,
+          "index_2b": 93,
+          "index_3b": 82,
+          "index_hr": 93
+        },
+        "L": {
+          "n_pa": 22007,
+          "index_hits": 97,
+          "index_1b": 100,
+          "index_2b": 92,
+          "index_3b": 82,
+          "index_hr": 95
+        },
+        "R": {
+          "n_pa": 27663,
+          "index_hits": 93,
+          "index_1b": 93,
+          "index_2b": 93,
+          "index_3b": 82,
+          "index_hr": 92
+        },
+        "roof_closed": {
+          "n_pa": 45691,
+          "index_hits": 96,
+          "index_1b": 97,
+          "index_2b": 93,
+          "index_3b": 81,
+          "index_hr": 95
+        }
+      }
+    },
+    "22": {
+      "name": "UNIQLO Field at Dodger Stadium",
+      "groupings": {
+        "All": {
+          "n_pa": 52350,
+          "index_hits": 98,
+          "index_1b": 94,
+          "index_2b": 93,
+          "index_3b": 64,
+          "index_hr": 126
+        },
+        "L": {
+          "n_pa": 24412,
+          "index_hits": 96,
+          "index_1b": 93,
+          "index_2b": 91,
+          "index_3b": 60,
+          "index_hr": 119
+        },
+        "R": {
+          "n_pa": 27934,
+          "index_hits": 99,
+          "index_1b": 94,
+          "index_2b": 95,
+          "index_3b": 69,
+          "index_hr": 132
+        }
+      }
+    }
+  }
+}
