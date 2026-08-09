@@ -5,6 +5,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-09 (Category 7)
+
+### Added
+- Category 7 opposing-bullpen calculators (`CALC_47`-`CALC_51`) in
+  `calculators/category_07_bullpen_exposure.py`, with the source fetchers in
+  `calculators/sources/category_07_bullpen_exposure.py`. All five work.
+- `fetch_active_pitchers`, `fetch_pitching_game_logs` and `fetch_bullpen`, which together
+  resolve an entire opposing bullpen with its season game logs in **two requests**.
+
+### Fixed
+- `main.py` slate-date defect filed as #49: the date comes from the runner's clock, so the
+  `0-2` UTC cron firings query the following day's schedule and never send. Not fixed in
+  this change, which touches no runtime code.
+
+### Notes
+- **The category was not blocked, and the reasons it was thought to be were both wrong.**
+  `GET /teams/{id}/roster?rosterType=active&date=` exists and honours `date`, verified at
+  two in-season dates rather than one because a silently ignored `date` would return
+  today's roster always and make every calculator here unbacktestable against a past slate.
+  The starter/reliever split needs no Statcast either: every game-log line carries
+  `gamesStarted`.
+- **`CALC_47` and `CALC_50` aggregate over relief appearances rather than over pitchers**,
+  which inverts the cost of a membership mistake. Admitting a starter is nearly free
+  (a rotation arm has almost no relief lines to contribute) while dropping a real reliever
+  costs his whole sample, so the threshold errs inclusive.
+- Both boundary constants are measured over 129 active pitchers and 889 starts on ten
+  clubs. The relief-share distribution is **not** the clean bimodal split a one-team sample
+  suggests: 32 of 129 sit between the poles, so 0.5 is defended by where the straddling
+  cases land (Mikolas .497 and Bello .495 below, Waldron .552 and Patrick .660 above).
+  The opener boundary of 12 batters faced per start sits in the observed gap between 9.2
+  and 16.0.
+- **A rested bullpen reads 0.0, not `None`.** An empty recency window normally means "no
+  evidence"; for `CALC_48` it means the reliever demonstrably did not pitch, which is the
+  reading the calculator exists for.
+- `CALC_50`'s whiff key is the only thing the Stats API does not publish at any endpoint
+  checked, so it is an optional Statcast argument on the `CALC_05`-`CALC_08` precedent
+  rather than a per-reliever pull nobody asked for.
+- Spring training is filtered through `common.is_competitive`, which the game log supports
+  for free. That is the filter #42 is open about Categories 1 through 4 missing.
+- Unwired as always: `main.py` untouched, output table unchanged. Every live value
+  independently reproduced from raw API JSON. 1396 tests passing.
+
+---
+
 ## 2026-08-09 (Category 10)
 
 ### Added

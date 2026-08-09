@@ -760,6 +760,89 @@ and no off day.
 publishes when a game ended, so a 10:30pm finish before a 1:05pm start is 14.5 hours here
 and nearer 11 of real turnaround.
 
+### Opposing bullpen exposure
+
+`category_07_bullpen_exposure.py` implements Category 7 (`CALC_47`-`CALC_51`). All five
+work. The category had been carried as blocked on a roster and usage feed this project
+does not have, and both halves of that turned out to be wrong.
+
+| Calculator | Value | Role | Keys |
+|---|---|---|---|
+| `CALC_47` | bullpen hits allowed per batter faced | `PROBABILITY` | plus `_BA` |
+| `CALC_48` | leverage-core pitches thrown, last 3 days | `DELTA` | plus `_7D`, `_AVAILABLE` |
+| `CALC_49` | share of relief work from the hitter's bad side | `MULTIPLIER` | plus `_LHP` |
+| `CALC_50` | balls in play per batter faced | `MULTIPLIER` | plus `_WHIFF` |
+| `CALC_51` | opener indicator | `DELTA` | plus `_BF_PER_START` |
+
+**A whole bullpen costs two requests.** `GET /teams/{id}/roster?rosterType=active&date=`
+exists and honours `date`, which was checked at two in-season dates rather than one:
+a silently ignored `date` would return today's roster always, and every calculator here
+would be unbacktestable against a past slate, which is the only thing #35 would want them
+for. Team 147 returned 13 pitchers in April and 13 in August, sharing 10. The second
+request is a batched `GET /people?personIds=...&hydrate=stats(group=[pitching],
+type=[gameLog])` covering the whole staff.
+
+**The starter/reliever split needs no Statcast.** Every game-log line carries
+`gamesStarted`, so a pitcher's relief work is exactly his lines with `gamesStarted == 0`.
+
+**`CALC_47` and `CALC_50` aggregate over relief appearances, not over pitchers**, and that
+inverts the cost of a membership mistake. Per pitcher, admitting a starter is expensive:
+his two hundred starting batters faced swamp the sample and drag the rate toward rotation
+quality, which is the thing the category exists to measure separately. Per appearance it is
+nearly free, because a rotation arm has almost no relief lines to contribute, while
+dropping a genuine reliever still costs his whole sample. So the threshold errs inclusive,
+which is the opposite of the instinct.
+
+Both boundaries are measured, over 129 active pitchers and 889 starts on ten clubs:
+
+- **Relief share of batters faced, 0.5.** The distribution is not the clean bimodal split
+  a one-team sample suggests: 57 pitchers sit at exactly 1.0 and 40 at exactly 0.0, but 32
+  are in between. What recommends 0.5 is where the straddling cases land. Just below are
+  Miles Mikolas (.497) and Brayan Bello (.495), rotation arms taking piggyback work; just
+  above are Matt Waldron (.552) and Chad Patrick (.660), bullpen arms who spot start.
+  Share of *batters faced* rather than of games, because one start is worth four relief
+  outings in workload and a games-based share calls a piggyback starter a reliever.
+- **Mean batters faced per start, 12.** Of 889 competitive starts, 786 ran to 18 or more.
+  Per pitcher with at least three starts, the mean-per-start values run 4.7, 5.7, 6.0, 6.5,
+  9.2 and then jump to 16.0, so the boundary sits in the observed gap rather than at a
+  round number near it. A conventional starter's shortest single outing in the sample was
+  13.
+
+**`CALC_51` is a prediction from history, not an observation.** Nothing published before
+first pitch says "opener"; what is available is that this pitcher's previous starts were
+short. A first-time opener therefore reads 0.0, and a pitcher on a strict return-from-injury
+pitch limit reads 1.0 without being an opener. Category 9 makes the same trade in the other
+direction, and the framing is the same: report the measurable thing under a name that says
+what was measured. `CALC_51` also inherits #44, since the probable starter publishes on a
+later clock than the lineup and changes on a scratch.
+
+**A rested bullpen reads 0.0, not `None`.** An empty recency window normally means "no
+evidence" and `apply_window` returns `None` to say so. For `CALC_48` an empty window means
+the reliever demonstrably did not pitch, which is a real reading of zero load and the whole
+point of the calculator, so the coercion to `[]` is deliberate. Two appearances on one date
+both count, which is what makes it right on a doubleheader.
+
+**`CALC_50`'s whiff key is the one thing the Stats API does not publish.** Checked directly:
+`stats=pitchArsenal` carries usage and velocity, `stats=expectedStatistics` carries outcome
+estimates, neither carries swings or misses. A real whiff rate needs Statcast at one call
+per reliever, seven calls against the two the rest of the category needs, for one key. It is
+therefore an optional argument on the `CALC_05`-`CALC_08` precedent: the in-play rate always
+resolves and whiff is opportunistic. The two keys are not strictly over the same population,
+since the pitch records carry no start flag.
+
+`CALC_49` weights by relief batters faced rather than counting heads, because a left-hander
+with four appearances and one with sixty are not the same exposure. **A switch hitter is
+never at a platoon disadvantage**, so his `CALC_49` is 0.0 with the full sample behind it
+rather than `None`: against a bullpen he picks his side after each arm is announced. The
+ROADMAP scopes the mix to the sixth through ninth innings and this does not, because the
+game log is one row per appearance and carries no inning.
+
+The category filters spring training through `common.is_competitive`, which the game log
+supports for free because every split carries `gameType`. That is the filter #42 is open
+about Categories 1 through 4 missing.
+
+Every value was independently reproduced from raw API JSON before the module was trusted.
+
 ### Output format
 
 ```
