@@ -143,7 +143,7 @@ calculator sits with the others that share its data source:
 ```
 calculators/
     __init__.py                          # public surface
-    common.py                            # Window, roles, Rate, counting-stat helpers
+    common.py                            # Window, roles, Rate, counting-stat and hit-event helpers
     baselines.py                         # loaders for generated league-reference data
     data/                                # generated reference data, checked in
     category_01_bvp_matchups.py          # CALC_01-08

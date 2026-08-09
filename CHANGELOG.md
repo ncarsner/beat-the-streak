@@ -60,7 +60,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `requirements.txt` implied pip.
 - `HIT_EVENTS` moved from `category_02_platoon_splits.py` to `calculators/common.py`. Every
   category that counts hits off pitch-level rows needs the same set, and two copies would
-  eventually disagree. Still imported into Category 2's namespace, so nothing there changes.
+  eventually disagree. Nothing imported it from Category 2, so the move is internal.
 
 ### Fixed
 - A test in the Category 1 source suite patched `fetch_bvp_stats` but not `fetch_bvp_statcast`,
