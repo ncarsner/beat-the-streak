@@ -28,21 +28,22 @@ The metric is intentionally lightweight and designed to complement, not replace,
    cd beat-the-streak
    ```
 
-3. Create and activate a virtual environment:
+3. Install dependencies. This project uses [**uv**](https://docs.astral.sh/uv/):
+   ```bash
+   uv sync
+   ```
+
+   Or with pip, if you prefer:
    ```bash
    python -m venv .venv
    source .venv/bin/activate   # Windows: .venv\Scripts\activate
-   ```
-
-4. Install dependencies:
-   ```bash
    pip install -r requirements.txt
    ```
 
-   This includes **pybaseball**, which the Category 1 Statcast calculators need and which
-   pulls a large transitive tree (pandas, numpy, altair, cryptography). Nothing in the daily
-   run imports it — if you only want to run the ranking tool, `pip install requests
-   prettytable` is enough. The scheduled GitHub Actions workflow installs `requests` only.
+   Either includes **pybaseball**, which the Statcast calculators need and which pulls a
+   large transitive tree (pandas, numpy, altair, cryptography). Nothing in the daily run
+   imports it — if you only want to run the ranking tool, `requests` and `prettytable` are
+   enough. The scheduled GitHub Actions workflow installs `requests` only.
 
 No API key or config file is required: the MLB Stats API is public and free to use.
 
@@ -141,13 +142,22 @@ calculator sits with the others that share its data source:
 
 ```
 calculators/
-    __init__.py                    # public surface
-    common.py                      # Rate + counting-stat helpers shared by all categories
-    category_01_bvp_matchups.py    # CALC_01-08
-    sources.py                     # the only module here that touches the network
+    __init__.py                          # public surface
+    common.py                            # Window, roles, Rate, counting-stat helpers
+    baselines.py                         # loaders for generated league-reference data
+    data/                                # generated reference data, checked in
+    category_01_bvp_matchups.py          # CALC_01-08
+    category_02_platoon_splits.py        # CALC_09-15
+    category_06_lineup_game_context.py   # CALC_41
+    sources/                             # the only package here that touches the network
+        common.py                        #   HTTP + Statcast response cache
+        category_01_bvp_matchups.py
+        category_02_platoon_splits.py
+tests/                                   # mirrors the module layout, one file per module
+scripts/                                 # on-demand generators, never run by the tool
 ```
 
-`MLB_API_BASE` lives in `mlb_api.py`, shared by `main.py` and `calculators/sources.py`.
+`MLB_API_BASE` lives in `mlb_api.py`, shared by `main.py` and the source modules.
 
 The convention, applied to each category as it lands:
 
@@ -156,10 +166,50 @@ The convention, applied to each category as it lands:
 | Module | `category_NN_<slug>.py` | `category_01_bvp_matchups.py` |
 | Calculator | `calc_NN_<slug>(...)` | `calc_01_bvp_career_hit_rate` |
 | Category aggregate | `compute_category_NN(...)` | `compute_category_01` |
-| Fetch (in `sources.py`) | `fetch_<subject>(...)` | `fetch_bvp_stats` |
+| Fetch (in `sources/`) | `fetch_<subject>(...)` | `fetch_bvp_stats` |
+| Test module | `tests/test_<module>.py` | `tests/test_category_01_bvp_matchups.py` |
 
 Pure calculator modules never import `sources`, which is what keeps the arithmetic testable
 without mocking a request.
+
+#### The cross-category contract
+
+Two shared types in `common.py` keep eleven categories speaking the same language.
+
+**`Window`** — the temporal scope a calculator operates over, applied as a local slice over
+one season-wide fetch rather than as a separate request per window:
+
+| Window | Meaning |
+|---|---|
+| `CAREER()` | everything available |
+| `SEASON()` | the anchor season only |
+| `DAYS(n)` | the `n` calendar days **ending yesterday** — today's game has not been played |
+| `GAMES(n)` | the last `n` distinct games, appearance-anchored |
+| `PLATE_APPEARANCES(n)` | the last `n` PAs, appearance-anchored |
+| `SEASONS(n)` | the last `n` seasons, inclusive of the anchor |
+
+`DAYS(n)` is calendar-anchored on purpose. A hitter returning from a 12-day injured-list stint
+gets a 14-day window containing one game, and the `Rate`'s denominator says so — rather than
+reaching back five weeks to manufacture a full sample that would look current and not be.
+An empty window returns `None`: absence of evidence, never a 0.0 rate.
+
+**Role** — what the composite model is allowed to do with a value. Every calculator tags its
+own return, so `CALC_75` dispatches on the tag instead of carrying a lookup table of what each
+of 76 numbers means:
+
+| Role | Meaning |
+|---|---|
+| `PROBABILITY` | blends into `p_hit` |
+| `MULTIPLIER` | scales `p_hit`; **not** a probability |
+| `EXPONENT` | feeds `PA_proj`, the exponent — not `p_hit` |
+| `DELTA` | signed adjustment; may be negative, not clamped to [0, 1] |
+
+This is what makes adding a park factor to a hit rate a type error rather than a
+plausible-looking number.
+
+Every value carries a `Rate` — the number **and** the sample size it came from. No calculator
+returns a bare float, because a 1-for-2 head-to-head line is not evidence of a .500 hitter,
+and the composite needs the count to shrink small samples toward a prior.
 
 `category_01_bvp_matchups.py` implements the Category 1 (batter-vs-pitcher, "BvP")
 considerations, using the MLB Stats API's `vsPlayer` stat type. One request per batter covers
@@ -220,6 +270,41 @@ alongside a populated 3 PA total. Deriving career from the splits keeps `CALC_01
 from ever being smaller than `CALC_03`'s window over the same matchup; when no splits come
 back at all, `CALC_02` and `CALC_03` are `None` while `CALC_01` still reports the total.
 
+### Platoon and handedness calculators
+
+`category_02_platoon_splits.py` implements Category 2 (`CALC_09`–`CALC_15`). Handedness comes
+from one batched `GET /people?personIds=...` covering every batter and probable starter in the
+run — **not** from the lineup or schedule payloads, which do not carry `batSide` or `pitchHand`
+at all, with or without `hydrate=probablePitcher(person)`.
+
+| ID | Calculator | Source | Role |
+|---|---|---|---|
+| `CALC_09` | Hitter season vs. pitcher throws | `statSplits` | `PROBABILITY` |
+| `CALC_10` | Hitter recent (14d) vs. pitcher throws | Statcast | `PROBABILITY` (+ xBA key) |
+| `CALC_11` | Pitcher season vs. batter bats | `statSplits` | `PROBABILITY` |
+| `CALC_12` | Pitcher recent (14d) vs. batter bats | Statcast | `PROBABILITY` (+ xBA key) |
+| `CALC_13` | Switch-hitter split acuity | `statSplits` | `DELTA` |
+| `CALC_14` | Arm slot / release angle match | Statcast | `PROBABILITY` |
+| `CALC_15` | Reverse platoon split index | `statSplits` + league 2×2 | `MULTIPLIER` |
+
+The two 14-day calculators come from Statcast rather than the Stats API because **`sitCodes`
+and date ranges do not compose** there: `byDateRange` honors the window and silently drops the
+split, while `statSplits` honors the split and silently ignores the window. There is no
+Stats-API path to a date-windowed handedness split.
+
+Rates are **per plate appearance**, not per at-bat. The ROADMAP words several of these as "BA",
+but `p_hit` is defined per PA and combined as `1 − (1 − p_hit)^PA_proj`; an H/AB rate fed into a
+per-PA exponent overstates by roughly ten percent, since walks leave the AB denominator.
+
+`CALC_13` and `CALC_15` carry the **limiting** side's denominator — a differential is only as
+trustworthy as its thinner half, and for switch hitters that half is the off-side sample a
+platoon-savvy manager spends all season avoiding.
+
+`CALC_14` buckets arm angle at **30°** and **42°**, tertile-balanced against a measured sample
+of 233 pitchers (median 37°, min −61° submarine, max 69° — nobody throws from 90°). The
+conventional 20°/45° boundaries were rejected: they put 70% of the league in one bucket, which
+would have `CALC_14` measuring a hitter against nearly everyone.
+
 ### League platoon baseline
 
 `CALC_15` (reverse platoon split index) measures a hitter's own platoon gap against the
@@ -238,6 +323,18 @@ hand the effect is plain — each hand hits roughly 10–17 points better agains
 hand. Team-level aggregates cannot produce this, since teams are not split by batter hand.
 
 Switch hitters are excluded; they have no fixed batter hand, and `CALC_13` handles them.
+
+### Lineup spot and CALC_41
+
+`fetch_lineup` carries each player's `lineup_spot`, decoded from the boxscore's 3-digit
+`battingOrder` encoding (`"100"` = spot 1, `"101"` = the first substitute batting there, so
+`int(v) // 100` recovers the spot). `CALC_41` projects plate appearances from it across the
+ROADMAP's 4.6-to-3.7 range, with role `EXPONENT` — it feeds `PA_proj`, never `p_hit`.
+
+**Nothing in `calculators/` is called during a run.** No BvP, handedness, or Statcast request
+is made, `binomial_probability` still computes its exponent as `pa / 5`, and the ranked table
+is unchanged. Calculators are validated in isolation and will be consumed together by the
+composite model (`CALC_75`).
 
 ### Output format
 
@@ -282,8 +379,13 @@ P   = 1 − (1 − avg)^exp
 ## Running tests
 
 ```bash
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
+
+The suite is offline by design and never reaches a live API: every fetcher is monkeypatched
+and every payload is a fixture. An autouse guard in `tests/conftest.py` enforces this by
+blocking non-loopback socket connections, so a test that forgets to patch a fetcher fails
+loudly instead of quietly scraping Baseball Savant on every run.
 
 ---
 

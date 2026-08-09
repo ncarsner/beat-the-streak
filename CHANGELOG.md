@@ -5,6 +5,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-08
+
+### Added
+- Category 2 platoon/handedness calculators (`CALC_09`-`CALC_15`) in
+  `calculators/category_02_platoon_splits.py`, plus `CALC_41` (lineup-spot PA expectation) in
+  `calculators/category_06_lineup_game_context.py`.
+- Two shared types in `calculators/common.py` that every later category inherits: `Window`
+  (`CAREER`/`SEASON`/`DAYS(n)`/`GAMES(n)`/`PLATE_APPEARANCES(n)`/`SEASONS(n)`, applied as a
+  local slice over one season-wide fetch) and roles (`PROBABILITY`/`MULTIPLIER`/`EXPONENT`/
+  `DELTA`), so a calculator declares how the composite may consume it rather than the composite
+  keeping a lookup table of what 76 numbers mean.
+- Statcast response cache at `.cache/statcast/{role}_{player_id}_{season}[_{date}].csv.gz`.
+  Past seasons are immutable and never expire; the current season is date-keyed. `.csv.gz`
+  specifically to avoid a `pyarrow` dependency. Measured saving: 3.4s per batter pull, 4.6s
+  per pitcher pull, on a library version with no cache of its own.
+- Source fetchers for Category 2: batched handedness (`GET /people?personIds=`, one request
+  for an entire slate), `statSplits` for both stat groups, and Statcast pitcher/batter pulls.
+- League 2x2 platoon baseline (`scripts/generate_league_platoon_baseline.py` +
+  `calculators/data/league_platoon_baseline.json`), generated on demand from 4 Stats API
+  requests. Loader in `calculators/baselines.py`.
+- `lineup_spot` on every lineup entry, decoded from the boxscore's 3-digit `battingOrder`
+  encoding (`"100"` = spot 1, `"101"` = first substitute batting there).
+- Autouse network guard in `tests/conftest.py`: any test opening a non-loopback socket now
+  fails. The suite documented itself as offline long before anything enforced it, and it had
+  silently broken twice.
+
+### Changed
+- `calculators/sources.py` split into a `sources/` package and `test_suite.py` into a `tests/`
+  package, both mirroring the calculator module layout.
+- `CALC_01`-`CALC_08` migrated onto the shared `Window` and role types; `RECENT_WINDOW_YEARS`
+  is now `SEASONS(3)`. One calculator contract across the package, not two.
+- Documented `uv` as the project's package manager. Nothing on disk recorded it, and
+  `requirements.txt` implied pip.
+
+### Fixed
+- A test in the Category 1 source suite patched `fetch_bvp_stats` but not `fetch_bvp_statcast`,
+  so every run scraped Baseball Savant for real. It never failed; the only symptom was a 0.43s
+  test in a suite where nothing else exceeded 0.05s.
+
+### Notes
+- **Nothing in `calculators/` is called during a run.** No BvP, handedness, or Statcast request
+  is made, `binomial_probability` still computes `pa / 5`, and the ranked table is unchanged.
+- Rates in Category 2 are per plate appearance, not per at-bat. The ROADMAP words several as
+  "BA", but `p_hit` is defined per PA and combined as `1 - (1 - p_hit)^PA_proj`; an H/AB rate
+  in a per-PA exponent overstates by roughly ten percent.
+- `sitCodes` and date ranges do not compose on the MLB Stats API, which is why the two 14-day
+  calculators are Statcast-derived: `byDateRange` honors the window and drops the split,
+  `statSplits` honors the split and ignores the window.
+- The pitching stat group has no `plateAppearances` key. `battersFaced` is mapped onto it at
+  the source boundary; without that, `CALC_11` returns `None` for every pitcher, silently.
+- `pybaseball.statcast()` is broken at the pinned 2.0.0 (`KeyError` on `pitcher.1` /
+  `fielder_2.1` in `postprocessing`). `statcast_batter` and `statcast_pitcher` are unaffected.
+  The exact pin protects a working consumer from source drift; it does not protect one that
+  was already stale.
+
+---
+
 ## 2026-08-07
 
 ### Added
