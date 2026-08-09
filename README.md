@@ -452,9 +452,10 @@ starter enters. It is also the first real consumer of `common.py`'s `Window` mac
 **Spring training is excluded here, and only here.** A Statcast season pull includes spring
 games: 7.8% of the probe batter's pitches and 10.1% of the probe pitcher's. At season
 aggregate that is noise; across a 3-game or 7-day window in late March it is most of the
-sample. It compounds, because Statcast **computes no expected statistics for spring games**
-at all (13 of 13 spring batted balls had a null xBA, against 1 of 143 in the regular season),
-so keeping them puts plate appearances into a denominator whose expected-stat numerator
+sample. It compounds, because Statcast appears not to compute expected statistics for spring games:
+all 13 spring batted balls in the probe frame carried a null xBA, against 1 of 143 in the
+regular season. That is one batter in one season, enough to justify the filter and not enough
+to characterize Statcast's pipeline. Keeping them puts plate appearances into a denominator whose expected-stat numerator
 silently vanishes. Filtering flipped the probe hitter's `CALC_57` from +0.0043 to -0.0183, a
 sign change. Categories 1 through 4 do not filter; that is a real defect in shipped code and
 is drafted for filing rather than repaired in passing.

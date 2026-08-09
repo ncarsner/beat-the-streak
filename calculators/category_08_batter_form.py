@@ -145,9 +145,17 @@ def _batted_balls(pas: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 def _mean_reading(pas: Sequence[dict[str, Any]], field: str) -> Rate | None:
     """Mean of *field* over the batted balls that carry a reading.
 
-    The denominator is batted balls with a measurement, not all batted balls and
-    not plate appearances. Statcast fails to measure roughly 1 batted ball in
-    150, and a null is no reading rather than a zero.
+    The denominator is batted balls carrying a reading **of that field**, not all
+    batted balls and not plate appearances. A null is no reading rather than a
+    zero, so it leaves both numerator and denominator.
+
+    Per field on purpose: the expected-stat columns go null independently of each
+    other. In the probe frame's 143 competitive batted balls,
+    `estimated_ba_using_speedangle` was null once and
+    `estimated_woba_using_speedangle` never was. A shared "measurable batted ball"
+    filter would therefore throw away a good xwOBA reading to match a missing xBA
+    one, and two calculators reading different columns can legitimately report
+    different sample sizes over the same plate appearances.
     """
     values = [
         float(pa[field]) for pa in _batted_balls(pas) if pa.get(field) is not None

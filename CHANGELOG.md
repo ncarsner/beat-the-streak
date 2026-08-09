@@ -18,9 +18,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `common.is_competitive` exclude spring training, exhibitions, and the All-Star game;
   postseason codes are deliberately not enumerated, so they are kept. A Statcast season pull
   includes spring games (7.8% of the probe batter's pitches, 10.1% of the probe pitcher's),
-  and Statcast **computes no expected statistics for them at all** (13 of 13 spring batted
-  balls carried a null xBA against 1 of 143 in the regular season). Filtering flipped the
-  probe hitter's `CALC_57` from +0.0043 to -0.0183, a sign change.
+  and Statcast appears not to compute expected statistics for them: all 13 spring batted
+  balls in the probe frame carried a null xBA, against 1 of 143 in the regular season. That
+  is one batter in one season, enough to justify the filter and not enough to characterize
+  Statcast's pipeline. Filtering flipped the probe hitter's `CALC_57` from +0.0043 to -0.0183, a sign change.
 - A `today` parameter on every Category 8 calculator, threaded to `apply_window`. A
   calculator that reads the clock internally cannot be evaluated against a past date, which
   is what the validation harness in #35 has to do.
