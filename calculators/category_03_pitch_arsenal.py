@@ -22,7 +22,7 @@ can group every matching pitch and read the PA's outcome off whichever row
 carried it. Category 3 filters on attributes that *vary* pitch to pitch — a PA
 can see a 96 mph fastball and an 84 mph slider — so a rate over "PAs containing a
 matching pitch" would credit the outcome to a pitch that may not have produced
-it. `_terminal_pitch_by_pa` instead reduces each PA to the single pitch that
+it. `terminal_pitch_by_pa` instead reduces each PA to the single pitch that
 ended it, and the tier filters run over those. Verified against Statcast: the
 maximum-`pitch_number` row of every plate appearance is exactly the row carrying
 a terminal `events` value (240 of 240 PAs in the probe sample, 2026-08-08).
@@ -53,6 +53,7 @@ from calculators.common import (
     PROBABILITY,
     Rate,
     rate_or_none,
+    terminal_pitch_by_pa,
 )
 
 # ---------------------------------------------------------------------------
@@ -248,36 +249,6 @@ def extension_tier(release_extension: float | None) -> str | None:
     if release_extension <= long_bound:
         return EXTENSION_TIER_AVERAGE
     return EXTENSION_TIER_LONG
-
-
-def _terminal_pitch_by_pa(
-    pitches: Sequence[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Reduce pitch rows to the one pitch that ended each plate appearance.
-
-    Grouped on ``(game_pk, at_bat_number)`` — the pair that identifies a plate
-    appearance — and reduced by maximum `pitch_number` within the group.
-
-    Distinct from Category 2's `_plate_appearances`, which keeps every pitch of
-    a PA because it filters on attributes constant across one. Category 3
-    filters on attributes that change pitch to pitch, so the PA's outcome has to
-    be attributed to the pitch that actually produced it.
-
-    Rows missing any of the three identifying fields are dropped rather than
-    merged into one bogus group or defaulted to pitch zero.
-    """
-    terminal: dict[tuple[Any, Any], dict[str, Any]] = {}
-    for pitch in pitches:
-        game_pk = pitch.get("game_pk")
-        at_bat = pitch.get("at_bat_number")
-        number = pitch.get("pitch_number")
-        if game_pk is None or at_bat is None or number is None:
-            continue
-        key = (game_pk, at_bat)
-        current = terminal.get(key)
-        if current is None or number > current["pitch_number"]:
-            terminal[key] = pitch
-    return list(terminal.values())
 
 
 def _hit_rate(terminal_pitches: Sequence[dict[str, Any]]) -> Rate | None:
@@ -514,7 +485,7 @@ def _tier_hit_rate(
     hitter_pitches: Sequence[dict[str, Any]], tier_of, tier: str
 ) -> Rate | None:
     """Hitter H/PA over plate appearances that ended on a pitch in *tier*."""
-    terminal = _terminal_pitch_by_pa(hitter_pitches)
+    terminal = terminal_pitch_by_pa(hitter_pitches)
     return _hit_rate([p for p in terminal if tier_of(p) == tier])
 
 
@@ -619,7 +590,7 @@ def calc_22_horizontal_break_acuity(
         pfx_x = pitch.get("pfx_x")
         return pfx_x is not None and abs(float(pfx_x)) >= EXTREME_PFX_X_FEET
 
-    terminal = _terminal_pitch_by_pa(hitter_pitches)
+    terminal = terminal_pitch_by_pa(hitter_pitches)
     rate = _hit_rate([p for p in terminal if is_extreme(p)])
 
     with_break = [p for p in pitcher_pitches if p.get("pfx_x") is not None]

@@ -17,6 +17,54 @@ COUNTING_STATS = ("plateAppearances", "atBats", "hits", "strikeOuts", "baseOnBal
 # needs the same set, and two copies would eventually disagree.
 HIT_EVENTS = frozenset({"single", "double", "triple", "home_run"})
 
+# Statcast `events` values that retire the batter, and those on which he reached
+# base. Both are enumerated explicitly rather than one set plus a "everything
+# else is the other thing" complement rule, and that is the whole point of
+# writing them out: `events` also carries values that are not batter outcomes at
+# all. A plate appearance can end on `truncated_pa`, `caught_stealing_2b`,
+# `pickoff_1b`, `wild_pitch`, or `runner_double_play`, none of which say anything
+# about whether the hitter was retired. Under a complement rule every one of them
+# would score as an out, which is the same silent-negative failure mode
+# documented for CALC_14 in issue #37.
+#
+# A value in neither set is dropped from numerator *and* denominator, so an
+# unrecognized event shrinks the sample instead of biasing the rate. Verified
+# against the cached probe frames: 774 of 774 plate appearances classified into
+# one of the two sets, zero residue (2026-08-09).
+OUT_EVENTS = frozenset(
+    {
+        "field_out",
+        "strikeout",
+        "strikeout_double_play",
+        "grounded_into_double_play",
+        "force_out",
+        "double_play",
+        "triple_play",
+        "sac_fly",
+        "sac_bunt",
+        "sac_fly_double_play",
+        "sac_bunt_double_play",
+        "fielders_choice_out",
+        "other_out",
+        "batter_interference",
+    }
+)
+
+# `fielders_choice` (batter reached, a runner was retired) is a reach; its
+# sibling `fielders_choice_out` (the batter himself was retired) is an out, and
+# the two codes differ by one word. `field_error` is a reach for the same reason
+# it is not an at-bat hit: the batter is on base.
+ON_BASE_EVENTS = HIT_EVENTS | frozenset(
+    {
+        "walk",
+        "intent_walk",
+        "hit_by_pitch",
+        "catcher_interf",
+        "field_error",
+        "fielders_choice",
+    }
+)
+
 
 class Rate(NamedTuple):
     """A rate paired with the sample size it was computed over.
@@ -29,6 +77,43 @@ class Rate(NamedTuple):
 
     rate: float
     denominator: int
+
+
+def terminal_pitch_by_pa(
+    pitches: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Reduce pitch rows to the one pitch that ended each plate appearance.
+
+    Grouped on ``(game_pk, at_bat_number)`` -- the pair that identifies a plate
+    appearance -- and reduced by maximum ``pitch_number`` within the group.
+
+    Lives here because two categories need it and a second copy would eventually
+    disagree with the first. Use it before filtering pitch rows on any attribute
+    that varies within a plate appearance (velocity, pitch type, break, the count
+    itself). Filtering first and grouping second leaves every plate appearance
+    whose *terminal* pitch fell outside the filter in the denominator carrying
+    ``events: None``, which reads as an out; that is the CALC_14 defect in issue
+    #37.
+
+    Verified against Statcast: the maximum-``pitch_number`` row of every plate
+    appearance is exactly the row carrying a terminal ``events`` value (240 of
+    240 plate appearances, 2026-08-08).
+
+    Rows missing any of the three identifying fields are dropped rather than
+    merged into one bogus group or defaulted to pitch zero.
+    """
+    terminal: dict[tuple[Any, Any], dict[str, Any]] = {}
+    for pitch in pitches:
+        game_pk = pitch.get("game_pk")
+        at_bat = pitch.get("at_bat_number")
+        number = pitch.get("pitch_number")
+        if game_pk is None or at_bat is None or number is None:
+            continue
+        key = (game_pk, at_bat)
+        current = terminal.get(key)
+        if current is None or number > current["pitch_number"]:
+            terminal[key] = pitch
+    return list(terminal.values())
 
 
 def empty_line() -> dict[str, int]:

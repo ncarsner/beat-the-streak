@@ -200,6 +200,68 @@ def _arsenal_pitch(
     return record
 
 
+def _discipline_pitch(
+    game_pk=1,
+    at_bat_number=1,
+    pitch_number=1,
+    events=None,
+    description="ball",
+    pitch_type=None,
+    zone=5,
+    balls=0,
+    strikes=0,
+    xba=None,
+):
+    """Build one Category 4 pitch record.
+
+    *zone* defaults to 5, the middle of the strike zone, so a test that does not
+    care about location still lands somewhere valid. Pass ``zone=None`` for an
+    untracked pitch, which is what a pitch-timer violation looks like in the
+    source data.
+
+    *pitch_type* is unused by the Category 4 field tuple and defaults to None; it
+    exists so a test can hand the same record to a Category 3 helper when
+    checking that the two categories agree on a shared reduction.
+    """
+    record = {
+        "game_date": "2026-07-01",
+        "game_pk": game_pk,
+        "at_bat_number": at_bat_number,
+        "pitch_number": pitch_number,
+        "events": events,
+        "description": description,
+        "type": _PITCH_TYPE_CODE.get(description, "B"),
+        "zone": zone,
+        "balls": balls,
+        "strikes": strikes,
+        "estimated_ba_using_speedangle": xba,
+    }
+    if pitch_type is not None:
+        record["pitch_type"] = pitch_type
+    return record
+
+
+# Statcast's `type` trichotomy, derived from `description` so a fixture cannot
+# describe a called strike typed as a ball. Verified against the probe frames:
+# every description maps to exactly one type, with `hit_into_play` the only X.
+_PITCH_TYPE_CODE = {
+    "ball": "B",
+    "blocked_ball": "B",
+    "automatic_ball": "B",
+    "hit_by_pitch": "B",
+    "pitchout": "B",
+    "called_strike": "S",
+    "foul": "S",
+    "foul_tip": "S",
+    "foul_bunt": "S",
+    "bunt_foul_tip": "S",
+    "swinging_strike": "S",
+    "swinging_strike_blocked": "S",
+    "missed_bunt": "S",
+    "hit_into_play": "X",
+}
+
+
 # ---- pybaseball stub (shared by source tests) ----
 
 

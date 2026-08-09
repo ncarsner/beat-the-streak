@@ -2,7 +2,7 @@
 
 import pytest
 
-from calculators.common import DELTA, MULTIPLIER, PROBABILITY
+from calculators.common import DELTA, MULTIPLIER, PROBABILITY, terminal_pitch_by_pa
 from calculators.category_03_pitch_arsenal import (
     EXTENSION_TIER_AVERAGE,
     EXTENSION_TIER_LONG,
@@ -19,7 +19,6 @@ from calculators.category_03_pitch_arsenal import (
     VELOCITY_TIER_UNDER_92,
     _hit_rate,
     _mean_xba,
-    _terminal_pitch_by_pa,
     _usage_share,
     calc_16_primary_fastball_xba_match,
     calc_17_breaking_ball_xba_match,
@@ -211,7 +210,7 @@ def test_terminal_pitch_is_the_highest_pitch_number_in_the_pa():
         ),
         _arsenal_pitch(pitch_number=2, pitch_type="FF", release_speed=96.0),
     ]
-    terminal = _terminal_pitch_by_pa(pitches)
+    terminal = terminal_pitch_by_pa(pitches)
     assert len(terminal) == 1
     assert terminal[0]["pitch_number"] == 3
     assert terminal[0]["pitch_type"] == "SL"
@@ -223,8 +222,8 @@ def test_input_order_does_not_decide_the_terminal_pitch():
         _arsenal_pitch(pitch_number=4, events="strikeout"),
         _arsenal_pitch(pitch_number=1),
     ]
-    assert _terminal_pitch_by_pa(pitches)[0]["events"] == "strikeout"
-    assert _terminal_pitch_by_pa(list(reversed(pitches)))[0]["events"] == "strikeout"
+    assert terminal_pitch_by_pa(pitches)[0]["events"] == "strikeout"
+    assert terminal_pitch_by_pa(list(reversed(pitches)))[0]["events"] == "strikeout"
 
 
 def test_plate_appearances_are_keyed_on_game_and_at_bat_together():
@@ -233,7 +232,7 @@ def test_plate_appearances_are_keyed_on_game_and_at_bat_together():
         _arsenal_pitch(game_pk=1, at_bat_number=7, pitch_number=1, events="single"),
         _arsenal_pitch(game_pk=2, at_bat_number=7, pitch_number=1, events="single"),
     ]
-    assert len(_terminal_pitch_by_pa(pitches)) == 2
+    assert len(terminal_pitch_by_pa(pitches)) == 2
 
 
 @pytest.mark.parametrize("field", ["game_pk", "at_bat_number", "pitch_number"])
@@ -241,11 +240,11 @@ def test_rows_missing_an_identifying_field_are_dropped(field):
     """Dropped, not defaulted — a None key would merge unrelated PAs into one."""
     pitch = _arsenal_pitch(events="single")
     pitch[field] = None
-    assert _terminal_pitch_by_pa([pitch]) == []
+    assert terminal_pitch_by_pa([pitch]) == []
 
 
 def test_no_pitches_yields_no_plate_appearances():
-    assert _terminal_pitch_by_pa([]) == []
+    assert terminal_pitch_by_pa([]) == []
 
 
 # ---------------------------------------------------------------------------
