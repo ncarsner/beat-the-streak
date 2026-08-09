@@ -130,8 +130,10 @@ def _outs_for_event(event: str | None) -> int:
 def _half_inning_outs(half: Sequence[dict[str, Any]], is_final: bool) -> int:
     """Outs the pitcher recorded in one half-inning.
 
-    *half* is his plate appearances in that half-inning, sorted by
-    ``at_bat_number``. *is_final* marks the last half-inning of the outing.
+    *half* is his plate appearances in that half-inning, **already sorted by
+    ``at_bat_number``**; only the first and last elements are read, so an unsorted
+    argument returns a wrong number rather than raising. `_game_outs` is the only
+    caller and it sorts. *is_final* marks the last half-inning of the outing.
 
     For every half-inning but the last, the pitcher was still on the mound when
     it ended, so he recorded exactly the outs remaining when he entered it. That
@@ -180,17 +182,27 @@ def _game_runs(pitches: Sequence[dict[str, Any]]) -> int:
     at all. That biases `CALC_60` *upward* precisely on the starts where he was
     pulled with runners aboard, which is to say precisely on his worst ones. There
     is no signal in the pitch feed that would fix it.
+
+    Grouped on ``(game_pk, inning)`` rather than on ``inning`` alone, even though
+    the only caller passes one game's rows. Scoping to the inning by itself would
+    make a whole-season argument collapse every game's first inning into one
+    group and return ``max(post_bat_score) - min(bat_score)`` across the year: a
+    large, plausible, entirely wrong number. Correct regardless of caller costs
+    one tuple.
     """
     runs = 0
-    innings = {p.get("inning") for p in pitches if p.get("inning") is not None}
-    for inning in innings:
-        rows = [p for p in pitches if p.get("inning") == inning]
-        starts = [p["bat_score"] for p in rows if p.get("bat_score") is not None]
-        ends = [
+    halves: dict[tuple[Any, Any], list[dict[str, Any]]] = {}
+    for pitch in pitches:
+        inning = pitch.get("inning")
+        if inning is not None:
+            halves.setdefault((pitch.get("game_pk"), inning), []).append(pitch)
+    for rows in halves.values():
+        opened = [p["bat_score"] for p in rows if p.get("bat_score") is not None]
+        closed = [
             p["post_bat_score"] for p in rows if p.get("post_bat_score") is not None
         ]
-        if starts and ends:
-            runs += max(0, int(max(ends)) - int(min(starts)))
+        if opened and closed:
+            runs += max(0, int(max(closed)) - int(min(opened)))
     return runs
 
 

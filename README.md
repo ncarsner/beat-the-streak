@@ -135,10 +135,11 @@ python main.py --cooldown-days 3
 
 Use `--cooldown-days 0` to disable the cooldown and recheck every player on every run.
 
-### Batter-vs-pitcher calculators
+### Model calculators
 
 Calculators live in the `calculators/` package, one module per `ROADMAP.md` category, so a
-calculator sits with the others that share its data source:
+calculator sits with the others that share its data source. Most are batter-versus-pitcher
+matchups; Categories 8 and 9 are single-sided, reporting one player's recent form.
 
 ```
 calculators/

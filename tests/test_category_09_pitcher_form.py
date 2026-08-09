@@ -7,6 +7,7 @@ import pytest
 from calculators.common import DELTA, MULTIPLIER, PROBABILITY
 from calculators.category_09_pitcher_form import (
     GAME_SCORE_V2_BASE,
+    _game_runs,
     MEATBALL_ZONE,
     REST_TIER_LONG,
     REST_TIER_NORMAL,
@@ -137,6 +138,18 @@ def test_runs_are_measured_across_all_pitch_rows_not_terminal_ones():
     for p in pitches[2:]:
         p["bat_score"] = p["post_bat_score"] = 1
     assert starts(pitches)[0]["runs"] == 1
+
+
+def test_runs_are_scoped_to_one_game_not_one_inning_number():
+    """Grouping on `inning` alone would collapse every game's first inning into
+    one bucket and return the season-wide score spread: a large, plausible,
+    entirely wrong number. The only caller passes one game, but correctness that
+    does not depend on the caller costs one tuple."""
+    rows = [
+        _form_pitch_thrown(game_pk=1, inning=1, bat_score=0, post_bat_score=1),
+        _form_pitch_thrown(game_pk=2, inning=1, bat_score=8, post_bat_score=9),
+    ]
+    assert _game_runs(rows) == 2
 
 
 # ---------------------------------------------------------------------------
