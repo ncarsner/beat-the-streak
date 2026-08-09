@@ -144,12 +144,35 @@ def fetch_schedule(date: str) -> list[dict]:
     return schedule
 
 
+def batting_order_spot(raw: object) -> int | None:
+    """Return the 1-9 lineup spot from a boxscore `battingOrder` value.
+
+    The boxscore encodes the spot as a 3-digit string: "100" is the starter in
+    the first spot, "101" the first substitute to bat there, "900" the ninth
+    spot. Integer-dividing by 100 recovers the spot and collapses substitutes
+    onto the spot they inherited, which is the thing that projects plate
+    appearances.
+
+    Returns None for a missing, non-numeric, or out-of-range value rather than
+    raising or extrapolating — a lineup entry with a spot of 0 or 11 is a shape
+    this code does not understand, and guessing would be worse than abstaining.
+    """
+    try:
+        spot = int(raw) // 100
+    except (TypeError, ValueError):
+        return None
+    return spot if 1 <= spot <= 9 else None
+
+
 def fetch_lineup(game_pk: int) -> dict[str, list[dict]]:
     """Return posted batting-order players for *game_pk* keyed by "home" and "away".
 
-    Each player dict: {id, fullName, team_id}. A team with an empty or absent
-    battingOrder returns an empty list for that side. Returns {"home": [], "away": []}
-    on request failure without raising.
+    Each player dict: {id, fullName, team_id, lineup_spot}. A team with an empty
+    or absent battingOrder returns an empty list for that side. Returns
+    {"home": [], "away": []} on request failure without raising.
+
+    `lineup_spot` is additive and unused by the run: it feeds CALC_41, which is
+    built but not wired, so the ranked table is unchanged.
     """
     try:
         resp = requests.get(
@@ -176,6 +199,7 @@ def fetch_lineup(game_pk: int) -> dict[str, list[dict]]:
                     "id": player_id,
                     "fullName": info.get("person", {}).get("fullName", ""),
                     "team_id": info.get("parentTeamId"),
+                    "lineup_spot": batting_order_spot(info.get("battingOrder")),
                 }
             )
         result[side] = side_list

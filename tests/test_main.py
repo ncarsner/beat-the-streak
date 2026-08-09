@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import main
 from teams import TEAM_CROSSWALK, TEAM_ID_TO_ABBR
 from main import (
+    batting_order_spot,
     is_within_past_week,
     binomial_probability,
     compile_player_data,
@@ -315,10 +316,15 @@ def _make_boxscore_payload(home_order, away_order, home_team_id=119, away_team_i
 
     def _team(batting_order, team_id):
         players = {}
-        for pid in batting_order:
+        # The real boxscore carries a per-player battingOrder as a 3-digit
+        # string ("100" = spot 1). The fixture mirrors that so lineup_spot is
+        # exercised by every test using this helper, not just the ones that
+        # assert on it.
+        for spot, pid in enumerate(batting_order, start=1):
             players[f"ID{pid}"] = {
                 "person": {"id": pid, "fullName": f"Player {pid}"},
                 "parentTeamId": team_id,
+                "battingOrder": f"{spot}00",
             }
         return {"battingOrder": batting_order, "players": players}
 
@@ -336,8 +342,18 @@ def test_fetch_lineup_posted_both_teams(monkeypatch):
     result = fetch_lineup(700001)
     assert len(result["home"]) == 2
     assert len(result["away"]) == 2
-    assert result["home"][0] == {"id": 111, "fullName": "Player 111", "team_id": 119}
-    assert result["away"][0] == {"id": 333, "fullName": "Player 333", "team_id": 137}
+    assert result["home"][0] == {
+        "id": 111,
+        "fullName": "Player 111",
+        "team_id": 119,
+        "lineup_spot": 1,
+    }
+    assert result["away"][0] == {
+        "id": 333,
+        "fullName": "Player 333",
+        "team_id": 137,
+        "lineup_spot": 1,
+    }
 
 
 @pytest.mark.parametrize(
@@ -1379,3 +1395,92 @@ def test_process_game_lineup_cached_entry_predating_the_field_is_backfilled(
     process_game_lineup(g, cache, "2026-07-20", {}, all_players)
 
     assert all_players[0]["opposing_pitcher_id"] == 543037
+
+
+# ---- batting_order_spot: the 3-digit boxscore encoding ----
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("100", 1),
+        ("200", 2),
+        ("900", 9),
+        ("101", 1),  # first substitute in the leadoff spot
+        ("903", 9),  # third substitute in the ninth spot
+        (100, 1),  # already an int
+    ],
+)
+def test_batting_order_spot_decodes_the_three_digit_encoding(raw, expected):
+    """ "101" is a substitute batting first, not spot 101 and not spot 2."""
+    assert batting_order_spot(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [None, "", "abc", "0", "1000", -100, {}, []])
+def test_batting_order_spot_rejects_unusable_values(raw):
+    """Missing, non-numeric, or out-of-range degrades to None rather than raising."""
+    assert batting_order_spot(raw) is None
+
+
+def test_fetch_lineup_carries_the_lineup_spot(monkeypatch):
+    """Each lineup entry gains lineup_spot, additively."""
+    payload = {
+        "teams": {
+            "home": {
+                "battingOrder": [111, 222],
+                "players": {
+                    "ID111": {
+                        "person": {"fullName": "Leadoff Guy"},
+                        "parentTeamId": 147,
+                        "battingOrder": "100",
+                    },
+                    "ID222": {
+                        "person": {"fullName": "Cleanup Guy"},
+                        "parentTeamId": 147,
+                        "battingOrder": "400",
+                    },
+                },
+            },
+            "away": {},
+        }
+    }
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse(payload))
+    home = fetch_lineup(777)["home"]
+
+    assert [p["lineup_spot"] for p in home] == [1, 4]
+    assert home[0]["fullName"] == "Leadoff Guy"
+    assert home[0]["id"] == 111
+
+
+def test_fetch_lineup_missing_batting_order_field_yields_none_spot(monkeypatch):
+    """A player object with no battingOrder key still produces an entry."""
+    payload = {
+        "teams": {
+            "home": {
+                "battingOrder": [111],
+                "players": {
+                    "ID111": {"person": {"fullName": "No Spot"}, "parentTeamId": 147}
+                },
+            },
+            "away": {},
+        }
+    }
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: FakeResponse(payload))
+    entry = fetch_lineup(777)["home"][0]
+
+    assert entry["lineup_spot"] is None
+    assert entry["fullName"] == "No Spot"
+
+
+def test_binomial_probability_still_uses_the_pa_over_five_exponent():
+    """CALC_41 is built but NOT wired: the run's math is unchanged.
+
+    If this ever fails, the ranked table's numbers moved, and that is a decision
+    that has to be made deliberately rather than as a side effect.
+    """
+    import inspect
+
+    source = inspect.getsource(binomial_probability)
+    assert "pa / 5" in source
+    # And the value itself: 20 AB, 6 H, 5 BB -> pa=25, exp=5, avg=.3
+    assert binomial_probability(20, 6, 5) == pytest.approx(1 - (1 - 0.3) ** 5)
