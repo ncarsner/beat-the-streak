@@ -590,8 +590,24 @@ publishes `hc_x` / `hc_y` but no angle. A flipped sign turns every pull into an 
 leaves the output entirely plausible, which is the same failure class as `delta_run_exp`'s
 perspective in Category 3. Negative is left field: a right-handed hitter distributed LF 62 /
 CF 42 / RF 34 and an extreme left-handed pull hitter LF 34 / CF 62 / RF 132. Angles outside
-fair territory are dropped rather than clamped, since a popup landing a few feet from the
-plate solves to a wild angle.
+fair territory are dropped rather than clamped, since a ball landing a few feet from the plate
+solves to a wild angle. That drop pattern is also what validates the **origin**: a displaced
+origin would misplace every ball, so deep drives would spill past 45 degrees too. They do not.
+0 of 119 batted balls beyond 300 feet fell outside fair territory, against 13 of 152 under 150
+feet. Error that vanishes as the lever arm grows is landing-point noise, not a bad origin.
+
+Only fly balls and line drives feed the spray distribution. Ground balls never leave the
+infield, and popups reach no fence while being the least reliable coordinate class there is.
+Excluding popups costs 8 to 10 percent of tracked air balls and moves `CALC_33` by at most
+0.73 feet and `CALC_36` by at most 0.15 mph, measured rather than assumed.
+
+**Two traps around the venue string, both real.** `CALC_40` matches the home club's
+abbreviation against Statcast's `home_team`, and the schedule must be requested with
+`hydrate=team` to carry one at all: an unhydrated team object holds only `id`, `name`, and
+`link`. Nor can the abbreviation come from `teams.py`'s crosswalk, which disagrees with
+Statcast on 5 of 30 clubs (`ARI`/`KCR`/`SDP`/`SFG`/`TBR` against Statcast's `AZ`/`KC`/`SD`/
+`SF`/`TB`). Either mistake makes `CALC_40` silently `None`, the second one at exactly five
+parks and nowhere else.
 
 **`CALC_39` solves for the open-roof index instead of dividing by the blend.** Savant
 publishes no working roof-open grouping, but the closed share is exactly its `n_pa` over the

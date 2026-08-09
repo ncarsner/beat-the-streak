@@ -172,6 +172,24 @@ def test_ground_balls_are_excluded_from_the_spray_distribution():
     assert shares["left_line"] == 1.0
 
 
+def test_popups_are_excluded_from_the_spray_distribution():
+    """A popup reaches no fence, so it says nothing about the geometry CALC_33
+    measures, and it is the least reliable coordinate class: it lands near the
+    plate, where a small error swings the solved angle wildly."""
+    pitches = [
+        _air_ball(-35.0, at_bat_number=1),
+        _env_pitch(
+            at_bat_number=2,
+            description="hit_into_play",
+            bb_type="popup",
+            angle=35.0,
+        ),
+    ]
+    shares, tracked = spray_distribution(pitches)
+    assert tracked == 1
+    assert shares["right_line"] == 0.0
+
+
 def test_spring_training_is_excluded_from_the_spray_distribution():
     pitches = [
         _air_ball(-35.0, at_bat_number=1),

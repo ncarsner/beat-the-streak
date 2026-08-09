@@ -52,7 +52,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   hitter distributed LF 62 / CF 42 / RF 34 and an extreme left-handed pull hitter LF 34 /
   CF 62 / RF 132. Angles outside fair territory are dropped rather than clamped (5 of 143 and
   15 of 243 batted balls, of which 15 of those 20 were popups or ground balls, where the
-  landing point sits a few feet from the plate and the angle is numerically unstable).
+  landing point sits a few feet from the plate and the angle is numerically unstable). **That
+  drop pattern is also what validates the origin**, which the sign check does not: a displaced
+  origin misplaces every ball, so deep drives would spill past 45 degrees too. They do not.
+  0 of 119 batted balls beyond 300 feet fell outside fair territory against 13 of 152 under
+  150 feet, and error that vanishes as the lever arm grows is landing-point noise.
+- **Only fly balls and line drives feed the spray distribution.** Ground balls never leave the
+  infield; popups reach no fence, so they say nothing about the geometry `CALC_33` measures,
+  and they are the least reliable coordinate class (10 of the 15 readings rejected as out of
+  play for the left-handed probe hitter). The cost was measured rather than assumed, since
+  dropping a batted-ball type also drops sample: 8 to 10 percent of tracked air balls, moving
+  `CALC_33` by at most 0.73 feet and `CALC_36` by at most 0.15 mph.
+- **Two traps around the venue string, both real and both silent.** `CALC_40` matches the home
+  club's abbreviation against Statcast's `home_team`. The schedule must be requested with
+  `hydrate=team` to carry one at all, since an unhydrated team object holds only `id`, `name`
+  and `link`; `main.fetch_schedule` does not currently hydrate, which is a change that has to
+  accompany wiring this in. And the abbreviation must **not** be resolved through `teams.py`'s
+  crosswalk, the obvious-looking shortcut: it disagrees with Statcast on 5 of 30 clubs, holding
+  ARI, KCR, SDP, SFG and TBR where Statcast publishes AZ, KC, SD, SF and TB. The Stats API's
+  own `abbreviation` field matches Statcast on all 29 clubs observed, including ATH. Either
+  mistake makes `CALC_40` permanently None, the second at exactly five parks.
 - **`CALC_39` solves for the open-roof index rather than dividing by the all-conditions
   blend.** Savant publishes no working roof-open grouping, but the closed share is exactly
   closed `n_pa` over all `n_pa`, which makes `A = f*C + (1 - f)*O` invertible. The naive ratio

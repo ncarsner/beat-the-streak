@@ -85,6 +85,13 @@ HOME_PLATE_HC = (125.42, 203.84)
 # the angle wildly. 5 of 143 batted balls for the right-handed probe hitter and
 # 15 of 243 for the left-handed one, and of those 20, 15 were popups or ground
 # balls.
+#
+# **That distance pattern is also what validates the origin above.** A wrong
+# origin would misplace every ball, so deep drives would spill past 45 degrees
+# just as short ones do. They do not: across both probe hitters, 0 of 119 batted
+# balls travelling more than 300 feet fell outside fair territory, against 13 of
+# 152 under 150 feet (2026-08-09). Error that vanishes as the lever arm grows is
+# landing-point noise, not a displaced origin.
 FAIR_TERRITORY_DEGREES = 45.0
 
 # The five field sectors, left to right, matching the order of `fences_ft` in
@@ -102,7 +109,20 @@ SECTOR_CENTERS = tuple((low + high) / 2 for low, high in SECTOR_BOUNDS)
 # from the geometry and wind calculators: fence distance and wind do not act on a
 # ball that never leaves the infield dirt, and including them would dilute the
 # spray distribution with the sector a hitter happens to roll the ball into.
-AIR_BALL_TYPES = frozenset({"fly_ball", "line_drive", "popup"})
+#
+# **Popups are excluded for the same reason, and for a second one.** A popup
+# reaches no fence, so it says nothing about the geometry `CALC_33` measures. It
+# is also the least reliable row class here: it lands close to the plate, which
+# is exactly where a small coordinate error swings the solved angle wildly, and
+# it dominates the readings this module rejects as out of play (10 of the 15
+# rejected for the left-handed probe hitter, 2 of 5 for the right-handed one).
+#
+# The cost was measured rather than assumed, since dropping a batted-ball type
+# also drops sample. It is 8 to 10 percent of tracked air balls and it moves
+# almost nothing: across two hitters and three parks `CALC_33` shifted by at most
+# 0.73 feet and `CALC_36` by at most 0.15 mph (2026-08-09). The exclusion is
+# therefore about keeping the population honest, not about chasing a number.
+AIR_BALL_TYPES = frozenset({"fly_ball", "line_drive"})
 
 
 # ---------------------------------------------------------------------------

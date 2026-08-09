@@ -7,6 +7,7 @@ Also installs the autouse network guard below, which enforces the suite's
 central invariant: no test ever reaches the live API.
 """
 
+import itertools
 import socket
 
 import pytest
@@ -457,10 +458,20 @@ def _env_pitch(
     }
 
 
+_air_ball_counter = itertools.count(1)
+
+
 def _air_ball(angle, events="field_out", **kwargs):
-    """A batted ball hit into the air at *angle*, the fixture `CALC_33` needs."""
+    """A batted ball hit into the air at *angle*, the fixture `CALC_33` needs.
+
+    Each call gets a fresh `at_bat_number` from a module-level counter unless the
+    caller names one. A counter rather than a hash of the arguments: `hash` is
+    salted per interpreter run for anything containing a string, so plate
+    appearance identity would be nondeterministic across runs and two fixtures
+    could collide on one run and not the next.
+    """
     kwargs.setdefault("bb_type", "fly_ball")
-    kwargs.setdefault("at_bat_number", abs(hash((angle, events))) % 100000)
+    kwargs.setdefault("at_bat_number", next(_air_ball_counter))
     return _env_pitch(angle=angle, description="hit_into_play", events=events, **kwargs)
 
 

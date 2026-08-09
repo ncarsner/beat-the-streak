@@ -161,6 +161,21 @@ def environment_from_schedule(
     caller can have `CALC_31`, `CALC_32`, `CALC_37`, and `CALC_38` even on a day
     when the boxscore carries no conditions yet.
 
+    **The schedule must be requested with ``hydrate=team`` for `CALC_40` to
+    work.** An unhydrated schedule team object carries only ``id``, ``name``, and
+    ``link`` (verified against the live API, 2026-08-09), so `home_team` resolves
+    to None and `CALC_40` is permanently None with nothing to indicate why.
+    `main.fetch_schedule` does not currently hydrate, which is a change that has
+    to accompany wiring this in.
+
+    **Do not resolve the abbreviation through `teams.TEAM_ID_TO_ABBR`**, the
+    obvious-looking shortcut. `CALC_40` matches this string against Statcast's
+    `home_team`, and the two vocabularies disagree on 5 of 30 clubs: Statcast
+    publishes AZ, KC, SD, SF, and TB where the crosswalk holds ARI, KCR, SDP,
+    SFG, and TBR. Using it would silently return None at five parks while working
+    everywhere else. The Stats API's own `abbreviation` field matches Statcast on
+    all 29 clubs observed, including the Athletics' ATH.
+
     Pure, no network. *game* is the raw MLB Stats API schedule game object.
     """
     record = empty_environment()

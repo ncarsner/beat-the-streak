@@ -170,6 +170,40 @@ def test_a_malformed_schedule_record_yields_nones_rather_than_raising(game):
     assert record["home_team"] is None
 
 
+def test_an_unhydrated_schedule_record_yields_no_home_team():
+    """The live schedule's team object carries only id, name and link without
+    `hydrate=team` (verified 2026-08-09). CALC_40 is then permanently None with
+    nothing to indicate why, so wiring this in has to hydrate the schedule.
+    """
+    unhydrated = {
+        "venue": {"id": 3313},
+        "dayNight": "night",
+        "teams": {
+            "home": {"team": {"id": 147, "name": "New York Yankees", "link": "/x"}}
+        },
+    }
+    record = environment_from_schedule(unhydrated)
+    assert record["venue_id"] == 3313
+    assert record["home_team"] is None
+
+
+def test_the_abbreviation_is_taken_from_the_response_not_the_teams_crosswalk():
+    """CALC_40 matches this string against Statcast's `home_team`, and the two
+    vocabularies disagree on 5 of 30 clubs: Statcast publishes AZ, KC, SD, SF and
+    TB where teams.py holds ARI, KCR, SDP, SFG and TBR. Resolving through the
+    crosswalk would silently return None at five parks and work everywhere else.
+    """
+    from teams import TEAM_ID_TO_ABBR
+
+    # 109 is Arizona: the crosswalk says ARI, the API and Statcast both say AZ.
+    assert TEAM_ID_TO_ABBR[109] == "ARI"
+    game = {
+        "venue": {"id": 15},
+        "teams": {"home": {"team": {"id": 109, "abbreviation": "AZ"}}},
+    }
+    assert environment_from_schedule(game)["home_team"] == "AZ"
+
+
 def test_batter_is_home_defaults_to_none_rather_than_false():
     """False would assert the hitter is on the road, which is a claim; None says
     the caller has not resolved it, which is the truth."""

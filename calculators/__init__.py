@@ -17,10 +17,14 @@ Layout and naming, applied to every category as it lands:
   calculator modules never import it, so the arithmetic stays testable without
   mocking.
 
-Implemented so far: category 1 (batter vs. pitcher), `CALC_01`-`CALC_08`.
-Nothing in this package is called during a run yet — the calculators are being
-validated individually and will be consumed together by the composite model
-(`CALC_75`).
+- ``baselines.py`` — loaders for the generated league and venue reference tables
+  in ``data/``, produced on demand by the scripts in ``scripts/`` and checked in
+  so a calculator reads a baseline as a constant rather than fetching it.
+
+Implemented so far, 55 of the 76: categories 1-5 (`CALC_01`-`CALC_40`),
+`CALC_41`, and categories 8-9 (`CALC_52`-`CALC_65`). Nothing in this package is
+called during a run — the calculators are validated individually and will be
+consumed together by the composite model (`CALC_75`).
 
 Only the cross-category surface is re-exported here. Calculators themselves are
 imported from the module that owns them —
