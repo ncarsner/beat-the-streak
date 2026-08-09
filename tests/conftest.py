@@ -712,3 +712,57 @@ def _statcast_frame(rows):
     import pandas as pd
 
     return pd.DataFrame(rows)
+
+
+# ---- Category 7 bullpen builders ----
+
+
+def _relief_line(
+    game_date="2026-08-08",
+    bf=4,
+    hits=1,
+    pitches=15,
+    *,
+    started=False,
+    at_bats=None,
+    walks=0,
+    hit_by_pitch=0,
+    strike_outs=1,
+    outs=3,
+    holds=0,
+    saves=0,
+    game_type="R",
+    game_pk=1,
+):
+    """One pitching game-log line as `fetch_pitching_game_logs` normalizes it.
+
+    `at_bats` defaults to ``bf - walks - hit_by_pitch``, which is the identity
+    the real API satisfies. Passing it explicitly is for the tests that need the
+    two to disagree, which is how `CALC_47`'s two keys are told apart.
+    """
+    return {
+        "game_date": game_date,
+        "game_type": game_type,
+        "game_pk": game_pk,
+        "started": started,
+        "batters_faced": bf,
+        "at_bats": bf - walks - hit_by_pitch if at_bats is None else at_bats,
+        "hits": hits,
+        "walks": walks,
+        "hit_by_pitch": hit_by_pitch,
+        "strike_outs": strike_outs,
+        "pitches": pitches,
+        "outs": outs,
+        "holds": holds,
+        "saves": saves,
+    }
+
+
+def _reliever(player_id=1, hand="R", games=None, name=None):
+    """One pitcher record in the shape every Category 7 calculator takes."""
+    return {
+        "id": player_id,
+        "full_name": name or f"Pitcher {player_id}",
+        "pitch_hand": hand,
+        "games": [] if games is None else list(games),
+    }
