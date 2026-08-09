@@ -139,12 +139,26 @@ def _pitch(description="ball", events=None, strikes=0, ev=None, xba=None, xwoba=
 # ---- pybaseball stub (shared by source tests) ----
 
 
-def _install_fake_pybaseball(monkeypatch, frame=None, exc=None):
-    """Stub the pybaseball import inside fetch_bvp_statcast."""
+def _install_fake_pybaseball(monkeypatch, frame=None, exc=None, pitcher_frame=None):
+    """Stub the pybaseball import inside the Statcast fetchers.
+
+    Stubs both entry points. `statcast_pitcher` serves *pitcher_frame* when given
+    and falls back to *frame*, so a test that does not care which side it is on
+    can pass one frame and a test comparing the two sides can pass both. Recorded
+    calls carry the entry point name so a test can assert which side was pulled —
+    the batter and pitcher fetchers share a cache namespace per role, and getting
+    that wrong would silently serve one side's frame to the other.
+    """
     import sys
     import types
 
     calls = []
+
+    def statcast_pitcher(start_dt, end_dt, player_id):
+        calls.append(("pitcher", start_dt, end_dt, player_id))
+        if exc is not None:
+            raise exc
+        return frame if pitcher_frame is None else pitcher_frame
 
     def statcast_batter(start_dt, end_dt, player_id):
         calls.append((start_dt, end_dt, player_id))
@@ -154,6 +168,7 @@ def _install_fake_pybaseball(monkeypatch, frame=None, exc=None):
 
     module = types.ModuleType("pybaseball")
     module.statcast_batter = statcast_batter
+    module.statcast_pitcher = statcast_pitcher
     monkeypatch.setitem(sys.modules, "pybaseball", module)
     return calls
 

@@ -26,11 +26,19 @@ verified against the live API on 2026-08-08.
 from __future__ import annotations
 
 from collections.abc import Collection
+from datetime import date, datetime
 from typing import Literal
 
 import requests
 
 from calculators.common import COUNTING_STATS
+from calculators.sources.category_01_bvp_matchups import STATCAST_FIRST_SEASON
+from calculators.sources.common import (
+    _cache_path,
+    _clean,
+    _read_statcast_cache,
+    _write_statcast_cache,
+)
 from mlb_api import MLB_API_BASE
 
 
@@ -163,3 +171,132 @@ def fetch_stat_splits(
         print(f"statSplits fetch error for player {player_id} ({exc})")
         return empty_stat_splits()
     return _parse_stat_splits(resp.json(), group)
+
+
+# ---------------------------------------------------------------------------
+# Statcast pitch-level fetchers
+# ---------------------------------------------------------------------------
+#
+# Two fetchers, not one, because the two sides of a matchup are different rows.
+# `statcast_pitcher` returns the pitches a pitcher threw; `statcast_batter`
+# returns the pitches a batter saw. A calculator needs whichever side owns the
+# population it averages over:
+#
+#   CALC_10  hitter's rate vs. pitcher hand      -> batter side (filter p_throws)
+#   CALC_12  pitcher's rate allowed vs. bat side -> pitcher side (filter stand)
+#   CALC_14  hitter's rate vs. arm-angle bucket  -> batter side (filter arm_angle)
+#
+# CALC_14 is the reason the batter fetcher exists. The PRD assigns it to the
+# pitcher fetcher, but it is defined as *the hitter's* rate against pitchers of a
+# given slot — averaging over the hitter's pitches, not one pitcher's. Reading it
+# off pitcher-side rows would answer a different question (how that one pitcher
+# fared), and would have no sample at all for a hitter facing that slot for the
+# first time.
+#
+# The batter fetcher shares the "batter" cache role with fetch_bvp_statcast, so a
+# run that already pulled a batter's season for Category 1 pays no second call.
+
+# Pitch fields the Category 2 calculators read. Wider than Category 1's set:
+# `game_date` scopes a DAYS(n) window, `game_pk`/`at_bat_number` together
+# identify a plate appearance so a rate can be per-PA rather than per-pitch, and
+# `stand`/`p_throws`/`arm_angle` are the handedness and slot filters.
+CATEGORY_02_PITCH_FIELDS = (
+    "game_date",
+    "game_pk",
+    "at_bat_number",
+    "events",
+    "description",
+    "stand",
+    "p_throws",
+    "arm_angle",
+    "estimated_ba_using_speedangle",
+    "estimated_woba_using_speedangle",
+)
+
+
+def _normalize_pitches(frame, fields: tuple[str, ...] = CATEGORY_02_PITCH_FIELDS):
+    """Return one plain dict per row of *frame*, restricted to *fields*.
+
+    Columns absent from the frame are skipped rather than filled: Statcast has
+    added columns over the years (`arm_angle` only exists from 2024), and a
+    fabricated None column would be indistinguishable from a real missing
+    reading. Every pandas missing sentinel is converted to None here, so no
+    calculator ever sees a NaN or a pd.NA.
+    """
+    import pandas as pd
+
+    present = [f for f in fields if f in frame.columns]
+    return [
+        {field: _clean(row[field], pd.isna) for field in present}
+        for _, row in frame[present].iterrows()
+    ]
+
+
+def _fetch_season_statcast(role: str, player_id: int, season: int | None):
+    """Return a cached-or-fetched season frame for *player_id*, or None.
+
+    Shared by both fetchers; *role* is ``'batter'`` or ``'pitcher'`` and selects
+    both the pybaseball entry point and the cache namespace. pybaseball is
+    imported inside this function, never at module scope — it drags in pandas,
+    and neither a daily run nor most of the test suite needs it.
+    """
+    season = season or datetime.today().year
+    if season < STATCAST_FIRST_SEASON:
+        return None
+    start = f"{season}-01-01"
+    end = min(date.today(), date(season, 12, 31)).isoformat()
+
+    cache_path = _cache_path(role, player_id, season)
+    frame = _read_statcast_cache(cache_path)
+    if frame is not None:
+        return frame
+
+    if role == "batter":
+        from pybaseball import statcast_batter as pull
+    else:
+        from pybaseball import statcast_pitcher as pull
+
+    frame = pull(start, end, player_id)
+    # Only cache a populated frame. An empty result means no Statcast coverage
+    # for this player/season yet; re-fetching next run is correct, so absence is
+    # left unsettled rather than frozen into the cache.
+    if frame is not None and not frame.empty:
+        _write_statcast_cache(cache_path, frame)
+    return frame
+
+
+def fetch_pitcher_statcast(pitcher_id: int, season: int | None = None) -> list[dict]:
+    """Return one normalized record per pitch *pitcher_id* threw in *season*.
+
+    Feeds CALC_12, which filters these by `stand` and `game_date`. Statcast
+    begins in 2015, so an earlier season returns []. Returns [] rather than
+    raising on failure, matching every other fetcher's error contract.
+    """
+    try:
+        frame = _fetch_season_statcast("pitcher", pitcher_id, season)
+    except Exception as exc:  # noqa: BLE001 - third-party call, failure modes undocumented
+        print(f"Statcast fetch failed for pitcher {pitcher_id} ({exc})")
+        return []
+    if frame is None or frame.empty:
+        return []
+    return _normalize_pitches(frame)
+
+
+def fetch_batter_statcast(batter_id: int, season: int | None = None) -> list[dict]:
+    """Return one normalized record per pitch *batter_id* saw in *season*.
+
+    Feeds CALC_10 (filtered by `p_throws`) and CALC_14 (bucketed by `arm_angle`).
+    Unlike `fetch_bvp_statcast` this is not filtered to one opposing pitcher —
+    these calculators average over the batter's whole season against a *class* of
+    pitcher, not one matchup. Shares the "batter" cache role with
+    `fetch_bvp_statcast`, so a run that already pulled this batter's season pays
+    no second call.
+    """
+    try:
+        frame = _fetch_season_statcast("batter", batter_id, season)
+    except Exception as exc:  # noqa: BLE001 - third-party call, failure modes undocumented
+        print(f"Statcast fetch failed for batter {batter_id} ({exc})")
+        return []
+    if frame is None or frame.empty:
+        return []
+    return _normalize_pitches(frame)

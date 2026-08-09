@@ -5,13 +5,20 @@ All tests mock requests.get — no live API call is ever made.
 
 import requests
 
+from calculators.sources.category_01_bvp_matchups import fetch_bvp_statcast
 from calculators.sources.category_02_platoon_splits import (
     _parse_stat_splits,
     empty_stat_splits,
+    fetch_batter_statcast,
     fetch_handedness,
+    fetch_pitcher_statcast,
     fetch_stat_splits,
 )
-from tests.conftest import FakeResponse
+from tests.conftest import (
+    FakeResponse,
+    _install_fake_pybaseball,
+    _statcast_frame,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -356,3 +363,191 @@ def test_fetch_stat_splits_non_2xx_returns_empty(monkeypatch):
         requests, "get", lambda *a, **kw: FakeResponse({}, status_code=503)
     )
     assert fetch_stat_splits(518692, "hitting", 2026) == empty_stat_splits()
+
+
+# ---------------------------------------------------------------------------
+# Statcast fetchers
+# ---------------------------------------------------------------------------
+
+
+def _sc_row(**overrides):
+    """Build one Statcast frame row carrying the Category 2 fields."""
+    row = {
+        "game_date": "2026-08-01",
+        "game_pk": 777001,
+        "at_bat_number": 12,
+        "events": None,
+        "description": "ball",
+        "stand": "L",
+        "p_throws": "R",
+        "arm_angle": 37.0,
+        "estimated_ba_using_speedangle": None,
+        "estimated_woba_using_speedangle": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_fetch_pitcher_statcast_normalizes_rows(monkeypatch):
+    """Rows come back as plain dicts carrying the Category 2 field set."""
+    _install_fake_pybaseball(
+        monkeypatch, pitcher_frame=_statcast_frame([_sc_row(), _sc_row(stand="R")])
+    )
+    records = fetch_pitcher_statcast(554430, season=2026)
+
+    assert len(records) == 2
+    assert [r["stand"] for r in records] == ["L", "R"]
+    assert records[0]["p_throws"] == "R"
+    assert records[0]["arm_angle"] == 37.0
+
+
+def test_fetch_pitcher_statcast_uses_the_pitcher_entry_point(monkeypatch):
+    """The pitcher fetcher must pull statcast_pitcher, not statcast_batter.
+
+    The two share a cache directory keyed by role; pulling the wrong entry point
+    would quietly file one side's frame under the other's name.
+    """
+    calls = _install_fake_pybaseball(
+        monkeypatch, pitcher_frame=_statcast_frame([_sc_row()])
+    )
+    fetch_pitcher_statcast(554430, season=2026)
+    assert calls[0][0] == "pitcher"
+    assert calls[0][-1] == 554430
+
+
+def test_fetch_batter_statcast_uses_the_batter_entry_point(monkeypatch):
+    """The batter fetcher must pull statcast_batter."""
+    calls = _install_fake_pybaseball(monkeypatch, frame=_statcast_frame([_sc_row()]))
+    fetch_batter_statcast(518692, season=2026)
+    assert calls[0][0] != "pitcher"
+    assert calls[0][-1] == 518692
+
+
+def test_fetch_batter_statcast_is_not_filtered_to_one_pitcher(monkeypatch):
+    """Unlike fetch_bvp_statcast, every pitch the batter saw is returned.
+
+    CALC_10 and CALC_14 average over a class of pitcher, not one matchup, so
+    filtering here would destroy the population they are defined over.
+    """
+    _install_fake_pybaseball(
+        monkeypatch,
+        frame=_statcast_frame(
+            [_sc_row(p_throws="R"), _sc_row(p_throws="L"), _sc_row(p_throws="R")]
+        ),
+    )
+    records = fetch_batter_statcast(518692, season=2026)
+    assert len(records) == 3
+    assert {r["p_throws"] for r in records} == {"L", "R"}
+
+
+def test_statcast_fetchers_leak_no_pandas_sentinels(monkeypatch):
+    """No np.nan or pd.NA reaches a calculator, in either direction."""
+    import numpy as np
+    import pandas as pd
+
+    frame = _statcast_frame([_sc_row(), _sc_row()])
+    frame.loc[0, "arm_angle"] = np.nan
+    frame["events"] = pd.array([None, "single"], dtype="string")
+
+    _install_fake_pybaseball(monkeypatch, frame=frame, pitcher_frame=frame)
+    for records in (
+        fetch_pitcher_statcast(554430, season=2026),
+        fetch_batter_statcast(518692, season=2026),
+    ):
+        for record in records:
+            for key, value in record.items():
+                assert not (isinstance(value, float) and value != value), key
+                assert value is None or not pd.isna(value), key
+        assert records[0]["arm_angle"] is None
+        assert records[0]["events"] is None
+        assert records[1]["events"] == "single"
+
+
+def test_statcast_fetchers_skip_absent_columns_rather_than_fabricating(monkeypatch):
+    """A column Statcast never returned is omitted, not invented as None.
+
+    arm_angle only exists from 2024. A fabricated None column would be
+    indistinguishable from a real missing reading on a pitch that has one.
+    """
+    row = _sc_row()
+    row.pop("arm_angle")
+    _install_fake_pybaseball(monkeypatch, pitcher_frame=_statcast_frame([row]))
+    record = fetch_pitcher_statcast(554430, season=2026)[0]
+    assert "arm_angle" not in record
+    assert "stand" in record
+
+
+def test_statcast_fetchers_reject_pre_statcast_seasons(monkeypatch):
+    """Statcast begins in 2015; an earlier season returns [] without a call."""
+    calls = _install_fake_pybaseball(
+        monkeypatch,
+        frame=_statcast_frame([_sc_row()]),
+        pitcher_frame=_statcast_frame([_sc_row()]),
+    )
+    assert fetch_pitcher_statcast(554430, season=2014) == []
+    assert fetch_batter_statcast(518692, season=2014) == []
+    assert calls == []
+
+
+def test_statcast_fetchers_return_empty_on_fetch_failure(monkeypatch, capsys):
+    """A third-party failure returns [] rather than raising."""
+    _install_fake_pybaseball(monkeypatch, exc=RuntimeError("savant down"))
+    assert fetch_pitcher_statcast(554430, season=2026) == []
+    assert fetch_batter_statcast(518692, season=2026) == []
+    assert "Statcast fetch failed" in capsys.readouterr().out
+
+
+def test_statcast_fetchers_return_empty_on_empty_frame(monkeypatch):
+    """An empty frame yields [] and is not cached as a settled answer."""
+    _install_fake_pybaseball(
+        monkeypatch, frame=_statcast_frame([]), pitcher_frame=_statcast_frame([])
+    )
+    assert fetch_pitcher_statcast(554430, season=2026) == []
+    assert fetch_batter_statcast(518692, season=2026) == []
+
+
+def test_fetch_pitcher_statcast_second_call_hits_the_cache(monkeypatch):
+    """A repeat pull in the same run costs no second network call."""
+    calls = _install_fake_pybaseball(
+        monkeypatch, pitcher_frame=_statcast_frame([_sc_row()])
+    )
+    first = fetch_pitcher_statcast(554430, season=2026)
+    second = fetch_pitcher_statcast(554430, season=2026)
+
+    assert len(calls) == 1
+    assert len(first) == len(second) == 1
+
+
+def test_batter_fetchers_share_one_cached_frame(monkeypatch):
+    """fetch_batter_statcast reuses the frame fetch_bvp_statcast already cached.
+
+    Both are the same batter-season pull under the same cache role, so a run that
+    did Category 1 work first must not pay 3.4s again for Category 2.
+    """
+    calls = _install_fake_pybaseball(
+        monkeypatch,
+        frame=_statcast_frame([_sc_row(**{"pitcher": 554430})]),
+    )
+    fetch_bvp_statcast(518692, 554430, season=2026)
+    fetch_batter_statcast(518692, season=2026)
+    assert len(calls) == 1
+
+
+def test_statcast_fetchers_do_not_import_pybaseball_at_module_scope():
+    """pybaseball must be imported inside the fetchers, never at module scope.
+
+    A module-scope import drags pandas into every test run and into a daily run
+    that never touches Statcast.
+    """
+    import ast
+    import pathlib
+
+    source = pathlib.Path(
+        "calculators/sources/category_02_platoon_splits.py"
+    ).read_text()
+    tree = ast.parse(source)
+    for node in tree.body:  # module level only, not nested function bodies
+        if isinstance(node, ast.Import):
+            assert all("pybaseball" not in n.name for n in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert "pybaseball" not in (node.module or "")
