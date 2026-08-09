@@ -5,6 +5,71 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-09 (Category 10)
+
+### Added
+- Category 10 defense and schedule-fatigue calculators (`CALC_66`-`CALC_71`) in
+  `calculators/category_10_defense_schedule.py`, with the source fetchers in
+  `calculators/sources/category_10_defense_schedule.py`.
+- `resolved` on the Category 1 batter-versus-pitcher payload, distinguishing "the API
+  answered" from "nothing came back".
+- `latitude`, `longitude`, `timezone_id` and `utc_offset_hours` in
+  `calculators/data/ballparks.json`. Additive: Category 5 reads none of them.
+
+### Notes
+- **Three of the six have no reachable source and ship as signatures**, matching
+  `CALC_46`. `CALC_66`/`CALC_67` need Statcast Outs Above Average, which pybaseball 2.0.0
+  does not expose (checked directly: its `fielding` helpers are Lahman and FanGraphs data).
+  `CALC_68` needs a per-umpire zone index, which requires joining pitch data to officials
+  across a league-wide pull that #38 blocks, plus a league mean of a quantity that cannot
+  yet be computed. #46 tracks the decision. The umpire's **identity** is the reachable
+  half and `fetch_home_plate_umpire` returns it today, recorded so a future session does
+  not re-derive it.
+- **`CALC_71` is the only calculator in the model whose value *is* the empty sample**, and
+  that inverts the convention everywhere else. A null career line means "never faced",
+  indicator 1.0 — but `empty_bvp()` produces the identical null line on a network failure,
+  so the two were indistinguishable, and this is the one calculator for which they are
+  opposite answers rather than both "no sample". Not hypothetical: the 2026-08-07 probe
+  recorded the same batter-pitcher pair returning a populated response one minute and an
+  empty split list the next, which is why `parse_bvp_stats` falls back to the API total at
+  all. `parse_bvp_stats` now emits `resolved`, true only when the response carried a
+  recognized stat group. Measured 2026-08-09: a pair that has faced returns
+  `[vsPlayerTotal(1), vsPlayer(3)]` and a pair that has not returns `[vsPlayer(0),
+  vsPlayerTotal(0)]` — both groups named, both empty — so the flag keys on group presence
+  rather than on split contents. Three tests asserted the old ambiguity by exact equality
+  and now assert the distinction.
+- **The previous game is ordered by `(date, game number)`, not by date.** Category 8 keys
+  its game log on `game_pk` for the same reason, but here a date-only order is worse than
+  a collapse: on a doubleheader date "what was the previous game" has two different
+  answers, and game two's is game one — zero travel miles and a turnaround measured in
+  hours, which is precisely the fatigue signal these calculators exist to detect.
+- **`CALC_70`'s time-zone shift is resolved from each venue's IANA zone at its own game
+  date, never from the table's stored offset.** The stored value is a generation-time
+  snapshot: Oracle Park reads `-7`, its July offset, and is `-8` in January. Arizona is
+  what makes this matter rather than merely annoy — Chase Field does not observe daylight
+  saving, so it sits at `-7` year round, meaning a July San Francisco to Phoenix trip
+  crosses **no** time zones while an April one crosses one. `zoneinfo` is in the standard
+  library, so getting this right costs nothing. The stored offset stays in the table as
+  provenance, not as an input.
+- **The haversine was validated against a real leg before anything depended on it.**
+  Wrigley Field to Yankee Stadium solves to 715.1 miles against roughly 713 by independent
+  reckoning; a swapped latitude and longitude, or a degrees-for-radians slip, yields a
+  plausible-looking wrong number. The two 2026-08-02/03 legs reproduce the whole category:
+  a Wrigley day game after a Wrigley night game gives the day-after-night indicator with
+  0 miles, and the following Chicago-to-New-York game gives 715.1 miles, a +1 hour
+  eastward shift and no off day.
+- **`CALC_69`'s second key is named `_TURNAROUND_HOURS` and measured start to start.**
+  Neither the schedule nor Statcast publishes the moment a game ended, so a 10:30pm finish
+  before a 1:05pm start is 14.5 hours here and nearer 11 hours of real turnaround. The
+  honest name prevents it being read as recovery time.
+- **`CALC_70` reports three measurements rather than the ROADMAP's rule.** "Cross-country
+  travel without an off day" is a rule over distance, time-zone shift and days of rest;
+  the mileage threshold that would turn them into a penalty is a league constant #38
+  blocks, so #39 owns the combination.
+- Unwired as always: `main.py` byte-identical. 1288 tests passing, up from 1202.
+
+---
+
 ## 2026-08-09 (Category 6 completion)
 
 ### Added

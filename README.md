@@ -155,6 +155,7 @@ calculators/
     category_06_lineup_game_context.py   # CALC_41-46
     category_08_batter_form.py           # CALC_52-59
     category_09_pitcher_form.py          # CALC_60-65
+    category_10_defense_schedule.py      # CALC_66-71
     sources/                             # the only package here that touches the network
         common.py                        #   HTTP + Statcast response cache
         category_01_bvp_matchups.py
@@ -165,6 +166,7 @@ calculators/
         category_06_lineup_game_context.py
         category_08_batter_form.py
         category_09_pitcher_form.py
+        category_10_defense_schedule.py
 tests/                                   # mirrors the module layout, one file per module
 scripts/                                 # on-demand generators, never run by the tool
 ```
@@ -707,6 +709,56 @@ the shape is recorded and an odds feed plugs straight in.
 is made, `binomial_probability` still computes its exponent as `pa / 5`, and the ranked table
 is unchanged. Calculators are validated in isolation and will be consumed together by the
 composite model (`CALC_75`).
+
+### Defense, umpires and schedule fatigue
+
+`category_10_defense_schedule.py` implements Category 10 (`CALC_66`-`CALC_71`). Three of
+the six work; three ship as signatures over caller-supplied values and return `None` in
+every current code path, the same treatment `CALC_46` gets.
+
+| Calculator | Value | Role | Reachable? |
+|---|---|---|---|
+| `CALC_66` | opposing infield Outs Above Average | `DELTA` | no — see #46 |
+| `CALC_67` | opposing outfield Outs Above Average | `DELTA` | no — see #46 |
+| `CALC_68` | umpire zone size vs. league mean | `MULTIPLIER` | no — see #38, #46 |
+| `CALC_69` | day-after-night indicator, plus `_TURNAROUND_HOURS` | `DELTA` | yes |
+| `CALC_70` | miles travelled, plus `_TZ_SHIFT` and `_DAYS_REST` | `DELTA` | yes |
+| `CALC_71` | never-faced indicator | `DELTA` | yes |
+
+pybaseball 2.0.0 exposes no fielding-leaderboard function and the Stats API publishes no
+OAA, so `CALC_66`/`CALC_67` have nowhere to read from. `CALC_68` is worse: Statcast carries
+no umpire column at all, so a per-umpire zone index needs a league-wide join through
+`game_pk`, and its league mean is a mean of a quantity that cannot yet be computed. The
+umpire's **identity** is the reachable half — it rides the boxscore request `fetch_lineup`
+already makes, and `fetch_home_plate_umpire` returns it today.
+
+**`CALC_71` is the only calculator in the model whose value *is* the empty sample.** A null
+career line means "these two have never met", indicator 1.0 — everywhere else a null line
+means "no evidence" and returns `None`. That made it uniquely sensitive to a dropped
+request, because `empty_bvp()` produces the identical null line on a network failure, and
+those are opposite answers rather than both "no sample". `parse_bvp_stats` now emits
+`resolved`, true only when the response carried a recognized stat group, and `CALC_71`
+returns `None` without it.
+
+**The previous game is ordered by `(date, game number)`, not by date.** On a doubleheader
+date "what was the previous game" has two answers, and game two's is game one: zero travel
+and a turnaround measured in hours, which is exactly the fatigue signal.
+
+**`CALC_70`'s time-zone shift comes from each venue's IANA zone at its own game date, never
+from the table's stored offset.** That stored value is a generation-time snapshot — Oracle
+Park reads `-7` in July and is `-8` in January. Arizona is what makes it matter: Chase
+Field does not observe daylight saving, so a July San Francisco to Phoenix trip crosses no
+time zones while an April one crosses one.
+
+The haversine was validated against a real leg first: Wrigley Field to Yankee Stadium
+solves to 715.1 miles against roughly 713 independently, and the 2026-08-02/03 pair
+reproduces the category end to end — a Wrigley day game after a Wrigley night game gives
+the indicator with 0 miles, then Chicago to New York gives 715.1 miles, +1 hour eastward
+and no off day.
+
+`CALC_69`'s second key is **start-to-start**, not rest: neither the schedule nor Statcast
+publishes when a game ended, so a 10:30pm finish before a 1:05pm start is 14.5 hours here
+and nearer 11 of real turnaround.
 
 ### Output format
 
