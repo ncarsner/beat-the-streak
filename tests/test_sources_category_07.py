@@ -15,7 +15,9 @@ from calculators.sources.category_07_bullpen_exposure import (
     fetch_bullpen,
     fetch_pitching_game_logs,
     fetch_reliever_pitches,
+    starter_record,
 )
+from calculators.category_07_bullpen_exposure import compute_category_07
 from tests.conftest import FakeResponse, _install_fake_pybaseball, _statcast_frame
 
 TODAY = date(2026, 8, 9)
@@ -352,7 +354,7 @@ def test_attach_returns_the_aggregate_argument(monkeypatch):
         return FakeResponse(_people(_person_log(1, [_log_split()])))
 
     monkeypatch.setattr(requests, "get", fake_get)
-    assert set(attach_category_07(147, TODAY, 2026)) == {"bullpen"}
+    assert set(attach_category_07(147, TODAY, 2026)) == {"bullpen", "starter"}
 
 
 # ---------------------------------------------------------------------------
@@ -407,3 +409,84 @@ def test_fetch_bullpen_never_pulls_statcast(monkeypatch):
 
     monkeypatch.setattr(requests, "get", fake_get)
     assert len(fetch_bullpen(147, TODAY, 2026)) == 1
+
+
+# ---------------------------------------------------------------------------
+# starter_record
+# ---------------------------------------------------------------------------
+
+
+def test_the_starter_is_picked_out_of_the_roster_pull():
+    """CALC_51's only real input path. `fetch_bullpen` already carries every
+    active pitcher with his log, so this is a lookup, not a request."""
+    pen = [
+        {"id": 1, "full_name": "Reliever", "pitch_hand": "R", "games": []},
+        {"id": 2, "full_name": "Starter", "pitch_hand": "L", "games": []},
+    ]
+    assert starter_record(pen, 2)["full_name"] == "Starter"
+
+
+def test_an_unannounced_starter_yields_none():
+    pen = [{"id": 1, "full_name": "Reliever", "pitch_hand": "R", "games": []}]
+    assert starter_record(pen, None) is None
+
+
+def test_a_starter_absent_from_the_roster_yields_none():
+    pen = [{"id": 1, "full_name": "Reliever", "pitch_hand": "R", "games": []}]
+    assert starter_record(pen, 999) is None
+
+
+def test_starter_record_takes_an_empty_bullpen():
+    assert starter_record([], 1) is None
+
+
+def test_attach_resolves_the_starter_without_a_third_request(monkeypatch):
+    calls = []
+
+    def fake_get(url, params=None, **kwargs):
+        calls.append(url)
+        if url.endswith("/roster"):
+            return FakeResponse(_roster(_roster_entry(1), _roster_entry(2, "Starter")))
+        return FakeResponse(
+            _people(
+                _person_log(1, [_log_split()]),
+                _person_log(2, [_log_split(started=1)]),
+            )
+        )
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    attached = attach_category_07(147, TODAY, 2026, starting_pitcher_id=2)
+    assert len(calls) == 2
+    assert set(attached) == {"bullpen", "starter"}
+    assert attached["starter"]["id"] == 2
+
+
+def test_attach_without_a_starting_pitcher_id_still_returns_the_key(monkeypatch):
+    def fake_get(url, params=None, **kwargs):
+        if url.endswith("/roster"):
+            return FakeResponse(_roster(_roster_entry(1)))
+        return FakeResponse(_people(_person_log(1, [_log_split()])))
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    assert attach_category_07(147, TODAY, 2026)["starter"] is None
+
+
+def test_the_attached_starter_feeds_calc_51_end_to_end(monkeypatch):
+    """The join the smoke test faked. An announced opener has to reach CALC_51
+    through the path a caller would actually use."""
+
+    def fake_get(url, params=None, **kwargs):
+        if url.endswith("/roster"):
+            return FakeResponse(_roster(_roster_entry(1), _roster_entry(2)))
+        return FakeResponse(
+            _people(
+                _person_log(1, [_log_split()]),
+                _person_log(2, [_log_split(started=1, battersFaced=5)]),
+            )
+        )
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    attached = attach_category_07(147, TODAY, 2026, starting_pitcher_id=2)
+    result = compute_category_07(**attached, today=TODAY)
+    assert result["CALC_51"].value.rate == 1.0
+    assert result["CALC_51_BF_PER_START"].value == (5.0, 1)

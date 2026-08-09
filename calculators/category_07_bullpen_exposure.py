@@ -525,6 +525,19 @@ def calc_51_opener_adjustment(
     Returns None for both when he has never started, which is the correct answer
     for a pitcher making his first career start rather than a claim that he is
     not an opener.
+
+    **An unannounced starter also returns None, and that case is not neutral.**
+    A club that has not named a starter is marginally more likely to be planning
+    an opener than one that has, so "no probable pitcher" is weak evidence *for*
+    the thing this calculator detects, and reading it as no evidence loses a
+    little signal. It is documented rather than acted on because the case is
+    rare: `hydrate=probablePitcher` carried an id on 60 of 60 sides across a
+    completed slate (2026-08-08) and an upcoming one (2026-08-09), and a
+    published probable matched the pitcher who actually took the mound in the
+    shortest start checked, a five-batter outing. If a future backtest finds
+    unannounced starters clustering on opener games, this wants the `resolved`
+    treatment `CALC_71` got, distinguishing "nobody was named" from "the fetch
+    failed".
     """
     empty = {"CALC_51": None, "CALC_51_BF_PER_START": None}
     if not starter:

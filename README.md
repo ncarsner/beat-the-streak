@@ -816,6 +816,13 @@ direction, and the framing is the same: report the measurable thing under a name
 what was measured. `CALC_51` also inherits #44, since the probable starter publishes on a
 later clock than the lineup and changes on a scratch.
 
+`starter_record` picks today's announced starter out of the roster pull rather than
+fetching him again, so `attach_category_07` still costs two requests while returning both
+arguments the aggregate needs. It exists because that join is `CALC_51`'s only real input
+path, and a helper the caller has to write themselves never gets exercised. Verified end to
+end on the 2026-08-09 slate: the Nationals' announced probable resolved out of the roster
+pull and read as an opener at 11.0 batters faced across his two starts.
+
 **A rested bullpen reads 0.0, not `None`.** An empty recency window normally means "no
 evidence" and `apply_window` returns `None` to say so. For `CALC_48` an empty window means
 the reliever demonstrably did not pitch, which is a real reading of zero load and the whole

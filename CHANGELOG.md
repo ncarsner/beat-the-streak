@@ -13,6 +13,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `calculators/sources/category_07_bullpen_exposure.py`. All five work.
 - `fetch_active_pitchers`, `fetch_pitching_game_logs` and `fetch_bullpen`, which together
   resolve an entire opposing bullpen with its season game logs in **two requests**.
+- `starter_record`, which picks today's announced starter out of the roster pull rather
+  than fetching him again. `attach_category_07` now returns both `bullpen` and `starter`,
+  still in two requests, so `CALC_51`'s only real input path exists and is tested.
 
 ### Fixed
 - `main.py` slate-date defect filed as #49: the date comes from the runner's clock, so the

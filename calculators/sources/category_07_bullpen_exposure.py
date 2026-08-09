@@ -50,7 +50,7 @@ resolves and the whiff rate is opportunistic.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from datetime import date
 from typing import Any
 
@@ -256,6 +256,32 @@ def fetch_bullpen(
     return [{**pitcher, "games": logs.get(pitcher["id"], [])} for pitcher in pitchers]
 
 
+def starter_record(
+    pitchers: Sequence[dict],
+    pitcher_id: int | None,
+) -> dict | None:
+    """Pick today's announced starter out of a `fetch_bullpen` result.
+
+    `CALC_51` needs the starter's own game log, and `fetch_bullpen` already
+    returns every active pitcher with his log attached, so this is a lookup
+    rather than a request. It exists because the join is the calculator's only
+    real input path and leaving it to the caller means it never gets exercised;
+    `environment_from_schedule` exists in Category 5 for the same reason.
+
+    *pitcher_id* is `main.fetch_schedule`'s `home_pitcher_id` or
+    `away_pitcher_id`, whichever belongs to the club *pitchers* came from.
+    Returns None for an unannounced starter or one absent from the active roster,
+    which `CALC_51` reads as no evidence; see that calculator for why the
+    unannounced case is not neutral.
+    """
+    if pitcher_id is None:
+        return None
+    for pitcher in pitchers or []:
+        if pitcher.get("id") == pitcher_id:
+            return pitcher
+    return None
+
+
 def fetch_reliever_pitches(
     pitcher_id: int,
     season: int | None = None,
@@ -283,11 +309,19 @@ def attach_category_07(
     team_id: int,
     on: date | None = None,
     season: int | None = None,
+    starting_pitcher_id: int | None = None,
 ) -> dict[str, Any]:
     """Fetch everything `compute_category_07`'s bullpen arguments need.
 
-    Convenience wrapper mirroring `attach_category_01`. Does **not** fetch
-    pitch-level data; pass `reliever_pitches` yourself if the whiff key is
-    wanted, having read the cost note in the module docstring.
+    Convenience wrapper mirroring `attach_category_01`, returning `bullpen` and
+    `starter` keyed to match the aggregate's parameter names. Still two requests:
+    the starter is picked out of the roster pull rather than fetched again.
+
+    Does **not** fetch pitch-level data; pass `reliever_pitches` yourself if the
+    whiff key is wanted, having read the cost note in the module docstring.
     """
-    return {"bullpen": fetch_bullpen(team_id, on, season)}
+    bullpen = fetch_bullpen(team_id, on, season)
+    return {
+        "bullpen": bullpen,
+        "starter": starter_record(bullpen, starting_pitcher_id),
+    }
