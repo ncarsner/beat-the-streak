@@ -220,6 +220,25 @@ alongside a populated 3 PA total. Deriving career from the splits keeps `CALC_01
 from ever being smaller than `CALC_03`'s window over the same matchup; when no splits come
 back at all, `CALC_02` and `CALC_03` are `None` while `CALC_01` still reports the total.
 
+### League platoon baseline
+
+`CALC_15` (reverse platoon split index) measures a hitter's own platoon gap against the
+direction expected for their handedness, which needs a league baseline conditioned on
+**both** hands. `calculators/data/league_platoon_baseline.json` holds that 2×2, generated
+on demand rather than fetched per run:
+
+```bash
+uv run python -m scripts.generate_league_platoon_baseline
+```
+
+Four requests, a few seconds. The pooled vs-L / vs-R figures cannot substitute: aggregated
+across all hitters they come out nearly identical (.2423 and .2444), because left- and
+right-handed batters have opposite platoon advantages that cancel. Conditioned on batter
+hand the effect is plain — each hand hits roughly 10–17 points better against the opposite
+hand. Team-level aggregates cannot produce this, since teams are not split by batter hand.
+
+Switch hitters are excluded; they have no fixed batter hand, and `CALC_13` handles them.
+
 ### Output format
 
 ```

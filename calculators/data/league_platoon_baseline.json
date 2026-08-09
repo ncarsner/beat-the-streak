@@ -1,0 +1,28 @@
+{
+  "season": 2026,
+  "generated": "2026-08-08",
+  "source": "MLB Stats API statSplits leaderboard + batched /people handedness",
+  "note": "rate is batting average (hits / at_bats) for the batter-hand x pitcher-hand cell. Switch hitters are excluded; see CALC_13.",
+  "splits": {
+    "L_vs_L": {
+      "rate": 0.23483550376970527,
+      "denominator": 11672,
+      "plate_appearances": 13133
+    },
+    "L_vs_R": {
+      "rate": 0.25164179104477613,
+      "denominator": 36850,
+      "plate_appearances": 41831
+    },
+    "R_vs_L": {
+      "rate": 0.24920369270636505,
+      "denominator": 18523,
+      "plate_appearances": 20945
+    },
+    "R_vs_R": {
+      "rate": 0.23955080943510088,
+      "denominator": 38113,
+      "plate_appearances": 42429
+    }
+  }
+}
