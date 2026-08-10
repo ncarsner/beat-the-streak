@@ -33,6 +33,7 @@ from main import (
     is_opener,
     opener_pitcher_ids,
     drop_opener_matchups,
+    format_model,
     probable_pitcher_id,
     refresh_opposing_pitchers,
     DEFAULT_COOLDOWN_DAYS,
@@ -751,7 +752,30 @@ def _make_schedule_game(
 
 
 def _with_opponent(players, pitcher_id):
+    """A cached player record: only the opposing starter is re-resolved."""
     return [{**p, "opposing_pitcher_id": pitcher_id} for p in players]
+
+
+def _posted(players, pitcher_id, side):
+    """What `process_game_lineup` records for a freshly posted lineup.
+
+    Carries the game context the model needs alongside the opposing starter.
+    Those fields are additive: nothing in the ranking path reads them, and a
+    cache entry written before they existed still works because every consumer
+    reaches for them with `.get`.
+    """
+    return [
+        {
+            **p,
+            "game_pk": 700001,
+            "game_number": 1,
+            "start_dt": _make_schedule_game()["start_dt"],
+            "opposing_pitcher_id": pitcher_id,
+            "side": side,
+            "is_home": side == "home",
+        }
+        for p in players
+    ]
 
 
 def test_process_game_lineup_posted_marks_queried_and_adds_players(monkeypatch):
@@ -763,7 +787,7 @@ def test_process_game_lineup_posted_marks_queried_and_adds_players(monkeypatch):
     g = _make_schedule_game()
     result = process_game_lineup(g, cache, "2026-07-20", schedule_map, all_players)
 
-    expected = _with_opponent(home, 554430) + _with_opponent(away, 543037)
+    expected = _posted(home, 554430, "home") + _posted(away, 543037, "away")
     assert result is True
     assert cache == {"700001": {"date": "2026-07-20", "players": expected}}
     assert all_players == expected
@@ -821,7 +845,7 @@ def test_process_game_lineup_prior_day_entry_does_not_block(monkeypatch):
     g = _make_schedule_game()
     result = process_game_lineup(g, cache, "2026-07-20", schedule_map, all_players)
 
-    expected = _with_opponent(home, 554430) + _with_opponent(away, 543037)
+    expected = _posted(home, 554430, "home") + _posted(away, 543037, "away")
     assert result is True
     assert cache == {
         "700001": {"date": "2026-07-20", "players": expected}
@@ -1192,7 +1216,10 @@ def test_dispatch_all_credentials_set_proceeds_to_send(monkeypatch):
 
 
 def _fake_args(
-    scheduled=False, cooldown_days=DEFAULT_COOLDOWN_DAYS, exclude_openers=False
+    scheduled=False,
+    cooldown_days=DEFAULT_COOLDOWN_DAYS,
+    exclude_openers=False,
+    model=False,
 ):
     import argparse
 
@@ -1200,6 +1227,7 @@ def _fake_args(
         scheduled=scheduled,
         cooldown_days=cooldown_days,
         exclude_openers=exclude_openers,
+        model=model,
     )
 
 
@@ -1604,3 +1632,128 @@ def test_the_flag_is_independent_of_scheduled_mode():
     args = build_arg_parser().parse_args(["--scheduled", "--no-exclude-openers"])
     assert args.scheduled is True
     assert args.exclude_openers is False
+
+
+# ---- Model column ----
+
+
+def test_the_model_column_renders_a_percentage():
+    assert format_model(0.7239) == "72.4%"
+
+
+def test_an_unresolved_model_renders_a_dash():
+    """A dash, not a blank or a zero: the model returning nothing is a different
+    statement from it returning a low probability."""
+    assert format_model(None) == "-"
+
+
+def test_the_model_flag_defaults_to_unset():
+    """Unset rather than True, because run() resolves it differently for a
+    manual run and a scheduled one."""
+    assert build_arg_parser().parse_args([]).model is None
+
+
+def test_the_model_flag_can_be_forced_on():
+    assert build_arg_parser().parse_args(["--model"]).model is True
+
+
+def test_the_model_flag_can_be_forced_off():
+    assert build_arg_parser().parse_args(["--no-model"]).model is False
+
+
+def test_the_table_carries_a_model_column(monkeypatch, capsys):
+    rows = [
+        {
+            "Player": "A",
+            "Team": "NYY",
+            "Hits": 5,
+            "At Bats": 10,
+            "Walks": 1,
+            "Strikeouts": 2,
+            "probability": 0.9,
+            "model": 0.72,
+        }
+    ]
+    probable_hitters(rows, n=1)
+    out = capsys.readouterr().out
+    assert "Model" in out
+    assert "72.0%" in out
+
+
+def test_a_player_without_a_model_value_still_renders(capsys):
+    """The model is additive. A run that did not compute it, or a hitter it
+    could not resolve, must not break the table."""
+    rows = [
+        {
+            "Player": "A",
+            "Team": "NYY",
+            "Hits": 5,
+            "At Bats": 10,
+            "Walks": 1,
+            "Strikeouts": 2,
+            "probability": 0.9,
+        }
+    ]
+    probable_hitters(rows, n=1)
+    assert "-" in capsys.readouterr().out
+
+
+def test_no_model_context_means_no_model_key(monkeypatch):
+    monkeypatch.setattr(main, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        main,
+        "scrape_player_data",
+        lambda player_id, player_name, team_id, schedule_map=None: {
+            "Player": player_name,
+            "At Bats": 10,
+            "Hits": 5,
+            "Walks": 1,
+            "Strikeouts": 2,
+        },
+    )
+    result = compile_player_data([_make_player("A", 1)], limit=None)
+    assert "model" not in result[0]
+
+
+def test_the_model_is_computed_only_for_players_that_produce_data(monkeypatch):
+    """A model evaluation costs a Statcast pull for anyone not already cached
+    today, so it must not run for a hitter who is skipped anyway."""
+    monkeypatch.setattr(main, "sleep", lambda _: None)
+    evaluated = []
+    monkeypatch.setattr(
+        main,
+        "player_model_probability",
+        lambda player, context: evaluated.append(player["id"]) or 0.5,
+    )
+
+    def fake_scrape(player_id, player_name, team_id, schedule_map=None):
+        if player_name == "NoData":
+            return None
+        return {
+            "Player": player_name,
+            "At Bats": 10,
+            "Hits": 5,
+            "Walks": 1,
+            "Strikeouts": 2,
+        }
+
+    monkeypatch.setattr(main, "scrape_player_data", fake_scrape)
+    compile_player_data(
+        [_make_player("NoData", 1), _make_player("Good", 2)],
+        limit=None,
+        model_context={"schedule": {}, "lineups": {}},
+    )
+    assert evaluated == [2]
+
+
+def test_a_failing_model_evaluation_does_not_take_down_the_run(monkeypatch):
+    """Additive column. One hitter whose Statcast pull times out must not stop
+    the tool from producing a ranking."""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("savant down")
+
+    monkeypatch.setattr("calculators.pipeline.assemble", boom)
+    player = {"id": 1, "fullName": "A", "game_pk": 700001}
+    context = {"schedule": {}, "lineups": {}, "today": None, "season": 2026}
+    assert main.player_model_probability(player, context) is None

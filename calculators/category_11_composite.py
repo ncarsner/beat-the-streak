@@ -239,6 +239,117 @@ def _precision_weighted(components: Sequence[PROBABILITY | None]) -> Rate | None
 
 
 # ---------------------------------------------------------------------------
+# Broad aggregate over every calculator reporting a hit rate per plate appearance
+# ---------------------------------------------------------------------------
+#
+# `CALC_74` reads three inputs, one per condition the ROADMAP names. This is the
+# wider alternative: every shipped key whose value is hits per plate appearance,
+# pooled by sample size. It is what the tool's `Model` column is built on.
+#
+# **Membership is an explicit list, not a filter on the `PROBABILITY` role tag**,
+# because the tag does not mean what the name suggests. Category 1 tags a
+# hard-hit rate and a whiff rate `PROBABILITY` "for uniformity", and `CALC_06`'s
+# xwOBA runs to roughly 2.0. Filtering on the role would pool those with genuine
+# hit rates and quietly inflate every answer. Issue #39 owns fixing the
+# convention; until it does, the list is the safe form.
+#
+# Every member was checked against live values on three hitters before inclusion,
+# and the rejects are recorded because the reason generalizes:
+#
+#   CALC_04              contact rate, .60 to .76. Not a hit rate.
+#   CALC_05              hard-hit rate on contact.
+#   CALC_06_XBA/XWOBA    per batted ball, and xwOBA is not bounded by 1.
+#   CALC_07 / CALC_08    whiff and putaway rates.
+#   CALC_10_XBA          xBA per batted ball, .20 to .41 against a per-PA .22.
+#   CALC_12_XBA          same.
+#   CALC_16 / 17 / 18    xBA per batted ball, .27 to .39. **The trap in this
+#                        group**: they look like batting averages and sit in a
+#                        plausible range, but their denominator is batted balls
+#                        rather than plate appearances, so pooling them with H/PA
+#                        raises the aggregate by roughly the contact rate.
+#   CALC_30              weighted zone xBA, per batted ball, same reason.
+#   CALC_14              excluded on correctness, not units. Issue #37: it
+#                        understates every rate it reports by 51 to 67 points
+#                        because it rebuilds plate appearances after filtering
+#                        pitches on an attribute that varies within one.
+#   CALC_47              bullpen, out of scope by the 2026-08-09 scope decision.
+#   CALC_74 / 75 / 76    composites of the members. Including them double counts.
+P_HIT_SCALE_KEYS = frozenset(
+    {
+        # Category 1, batter versus this pitcher
+        "CALC_01",
+        "CALC_02",
+        "CALC_03",
+        # Category 2, platoon
+        "CALC_09",
+        "CALC_10",
+        "CALC_11",
+        "CALC_12",
+        # Category 3, versus this starter's stuff
+        "CALC_20",
+        "CALC_21",
+        "CALC_22",
+        "CALC_23",
+        # Category 5, park and situation
+        "CALC_37_BATTER",
+        "CALC_37_PITCHER",
+        "CALC_38_BATTER",
+        "CALC_38_PITCHER",
+        "CALC_40",
+        # Category 6, times through the order
+        "CALC_44_BATTER_TTO1",
+        "CALC_44_BATTER_TTO2",
+        "CALC_44_BATTER_TTO3",
+        "CALC_44_PITCHER_TTO1",
+        "CALC_44_PITCHER_TTO2",
+        "CALC_44_PITCHER_TTO3",
+        # Category 8, recent form
+        "CALC_52",
+        "CALC_53",
+        "CALC_54",
+        # Category 11
+        "CALC_72",
+        "CALC_73",
+    }
+)
+
+
+def aggregate_hit_rate(results: dict[str, Any]) -> PROBABILITY | None:
+    """Pool every resolved `P_HIT_SCALE_KEYS` value in *results* by sample size.
+
+    *results* is the merged output of the `compute_category_NN` aggregates. Keys
+    outside the list, and keys that resolved to None, are skipped. Returns None
+    when nothing resolved.
+
+    **Two properties of this number that are not obvious and must not be
+    forgotten by whoever reads it next.**
+
+    First, **it over-weights the hitter's season baseline by construction.**
+    `CALC_09`, `CALC_11`, `CALC_37`, `CALC_38`, the `CALC_44` buckets and
+    `CALC_72` are largely the same season data sliced different ways, and
+    precision weighting treats them as independent evidence. So a season rate
+    effectively enters five or six times with a combined denominator in the
+    thousands, while a genuine head-to-head signal at 29 plate appearances is
+    almost invisible. That is a real defect, not a rounding concern, and it is
+    left in rather than patched because deciding what is redundant needs the
+    backtest in issue #35. Do not read this as an independent-evidence average.
+
+    Second, **it pools hits-per-PA with hits-allowed-per-PA.** `CALC_11`,
+    `CALC_12`, the pitcher-side `CALC_37`/`CALC_38` and the `CALC_44` pitcher
+    buckets are the starter's rates against, not the hitter's. Averaging them
+    with the hitter's own is a modelling choice: a .270 hitter facing a
+    .190-allowed pitcher lands between the two, which is roughly what a matchup
+    estimate should do. It is a choice and not an identity, so it is stated here.
+    """
+    components = [
+        value
+        for key, value in results.items()
+        if key in P_HIT_SCALE_KEYS and value is not None
+    ]
+    return _probability(_precision_weighted(components))
+
+
+# ---------------------------------------------------------------------------
 # CALC_75 -- Bayesian composite
 # ---------------------------------------------------------------------------
 

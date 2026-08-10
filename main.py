@@ -298,6 +298,71 @@ def drop_opener_matchups(players: list[dict], opener_ids: set[int]) -> list[dict
     return [p for p in players if p.get("opposing_pitcher_id") not in opener_ids]
 
 
+def fetch_hydrated_schedule(date: str) -> dict[int, dict]:
+    """Raw schedule games for *date* keyed by `gamePk`, hydrated with venue and team.
+
+    `fetch_schedule` projects each game down to ids and a start time, which is
+    all the ranking run needs. The model needs the venue and the team
+    abbreviation as well, and an unhydrated record carries neither: reading one
+    costs ten calculator keys per hitter. See issue #43, which tracks folding
+    the hydration into `fetch_schedule` itself.
+
+    Returns {} on failure, which resolves the model column to None rather than
+    stopping the run.
+    """
+    try:
+        resp = requests.get(
+            f"{MLB_API_BASE}/schedule",
+            params={"sportId": 1, "date": date, "hydrate": "team,venue"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"Hydrated schedule fetch error ({exc})")
+        return {}
+    return {
+        game["gamePk"]: game
+        for entry in resp.json().get("dates", [])
+        for game in entry.get("games", [])
+    }
+
+
+def player_model_probability(player: dict, context: dict) -> float | None:
+    """Run the full calculator model for one hitter and return P(>=1 hit).
+
+    *context* carries the run-wide inputs: `schedule` (hydrated, by `gamePk`),
+    `lineups` (by `gamePk`), `today` and `season`.
+
+    Returns None on any failure rather than raising. The model is an additive
+    column on an otherwise working tool, and one hitter whose Statcast pull times
+    out must not take the run down with it.
+    """
+    from calculators.pipeline import assemble, model_probability
+
+    game_pk = player.get("game_pk")
+    game = context["schedule"].get(game_pk) or {}
+    side = (context["lineups"].get(game_pk) or {}).get(player.get("side")) or []
+    try:
+        results = assemble(
+            player["id"],
+            player.get("opposing_pitcher_id"),
+            raw_game=game,
+            game_pk=game_pk,
+            team_id=player.get("team_id"),
+            lineup_side=side,
+            lineup_spot=player.get("lineup_spot"),
+            is_home=player.get("is_home"),
+            game_number=player.get("game_number", 1),
+            start_time=player.get("start_dt"),
+            season=context["season"],
+            today=context["today"],
+        )
+    except Exception as exc:  # noqa: BLE001 - additive column, never fatal
+        print(f"  model failed for {player.get('fullName')} ({exc})")
+        return None
+    return model_probability(results)
+
+
 def is_in_cooldown(player_id, cache, cooldown_days):
     """True if *player_id* polled with no recent data too recently to be worth rechecking."""
     last_checked = cache.get(str(player_id))
@@ -437,11 +502,33 @@ def process_game_lineup(
         schedule_map[g["away_team_id"]] = hour
         # Each batter faces the *other* side's probable starter; the flattened
         # list loses which side a batter was on, so resolve it here.
+        # `game_pk`, `side`, `is_home`, `game_number` and `start_dt` are carried
+        # so the model can rebuild this hitter's full context later without
+        # re-reading the schedule. They are additive: nothing in the ranking path
+        # reads them, and a cached entry from before they existed still works
+        # because every consumer uses `.get`.
+        context = {
+            "game_pk": game_pk,
+            "game_number": g.get("gameNumber", 1),
+            "start_dt": g["start_dt"],
+        }
         players = [
-            {**p, "opposing_pitcher_id": g.get("away_pitcher_id")}
+            {
+                **p,
+                **context,
+                "opposing_pitcher_id": g.get("away_pitcher_id"),
+                "side": "home",
+                "is_home": True,
+            }
             for p in lineup["home"]
         ] + [
-            {**p, "opposing_pitcher_id": g.get("home_pitcher_id")}
+            {
+                **p,
+                **context,
+                "opposing_pitcher_id": g.get("home_pitcher_id"),
+                "side": "away",
+                "is_home": False,
+            }
             for p in lineup["away"]
         ]
         all_players.extend(players)
@@ -457,6 +544,7 @@ def compile_player_data(
     cooldown_days=DEFAULT_COOLDOWN_DAYS,
     cache=None,
     schedule_map=None,
+    model_context=None,
 ):
     """Fetch and aggregate batting stats for each player.
 
@@ -469,6 +557,10 @@ def compile_player_data(
                        players are added on a no-data result and cleared on success.
         schedule_map:  {team_id: game_hour_utc} dict derived from fetch_schedule,
                        threaded through to scrape_player_data unchanged.
+        model_context: run-wide inputs for the `Model` column, or None to skip
+                       it. Computed only for players who survive the cooldown
+                       and produce data, because a model evaluation costs a
+                       Statcast pull for anyone not already cached today.
     """
     if cache is None:
         cache = {}
@@ -492,6 +584,8 @@ def compile_player_data(
             player_data["probability"] = binomial_probability(
                 player_data["At Bats"], player_data["Hits"], player_data["Walks"]
             )
+            if model_context:
+                player_data["model"] = player_model_probability(player, model_context)
             summary_data.append(player_data)
             print(f"ok  ({player_data['Hits']}-{player_data['At Bats']})")
             cache.pop(str(player_id), None)
@@ -501,6 +595,16 @@ def compile_player_data(
         sleep(random.uniform(0.6, 1.8))
 
     return summary_data
+
+
+def format_model(value: float | None) -> str:
+    """Render the model probability, or a dash when it did not resolve.
+
+    A dash rather than a blank or a zero: the model returning nothing is a
+    different statement from it returning a low probability, and the table has to
+    say which. Absent entirely when the run was not asked for a model.
+    """
+    return f"{value:.1%}" if value is not None else "-"
 
 
 def probable_hitters(summary_data, n=5):
@@ -517,7 +621,13 @@ def probable_hitters(summary_data, n=5):
     table = PrettyTable()
     today = datetime.today()
     table.title = f"{today.strftime('%B')} {today.day}, {today.year}"
-    table.field_names = ["Player", "Team", "H-AB", "BB/K", "Prob %"]
+    # `Model` sits next to `Prob %` deliberately: the two are different answers
+    # to the same question and the point of showing both is the comparison.
+    # `Prob %` is the shipped heuristic, a 5-game average put through the
+    # binomial with a `pa / 5` exponent. `Model` is the 76-calculator aggregate.
+    # Neither has been validated against outcomes yet (#35), so the ranking is
+    # still `Prob %` and `Model` is reported beside it, not instead of it.
+    table.field_names = ["Player", "Team", "H-AB", "BB/K", "Prob %", "Model"]
 
     for data in top_players:
         probability = f"{data['probability']:.1%}"
@@ -528,6 +638,7 @@ def probable_hitters(summary_data, n=5):
                 f"{data['Hits']}-{data['At Bats']}",
                 f"{data['Walks']}/{data['Strikeouts']}",
                 probability,
+                format_model(data.get("model")),
             ]
         )
 
@@ -543,6 +654,7 @@ def probable_hitters(summary_data, n=5):
                 f"{data['Hits']}-{data['At Bats']}",
                 f"{data['Walks']}/{data['Strikeouts']}",
                 probability,
+                format_model(data.get("model")),
             ]
         )
 
@@ -661,6 +773,24 @@ def run(args: argparse.Namespace) -> None:
             print(f"Excluded {dropped} hitters facing {len(openers)} opener(s)")
         all_players = kept
 
+    # The model is opt-out on a manual run and opt-in on a scheduled one, because
+    # the two have different deadlines. A hitter whose Statcast frame is already
+    # cached for today evaluates in about 2 seconds; one who is not costs a pull
+    # of roughly 78 seconds, and a full slate is 50 hitters plus up to 30
+    # starters. That is over an hour on the first tick of a day, against a
+    # 15-minute cron. Issue #50 tracks making it affordable there.
+    want_model = args.model
+    if want_model is None:
+        want_model = not args.scheduled
+    model_context = None
+    if want_model:
+        model_context = {
+            "schedule": fetch_hydrated_schedule(today),
+            "lineups": {g["gamePk"]: fetch_lineup(g["gamePk"]) for g in selected},
+            "today": now.date(),
+            "season": now.year,
+        }
+
     no_data_cache = load_no_data_cache()
     summary = compile_player_data(
         players=all_players,
@@ -668,6 +798,7 @@ def run(args: argparse.Namespace) -> None:
         cooldown_days=args.cooldown_days,
         cache=no_data_cache,
         schedule_map=schedule_map,
+        model_context=model_context,
     )
     save_no_data_cache(no_data_cache)
     save_queried_games_cache(queried_games_cache)
@@ -710,6 +841,20 @@ def build_arg_parser():
             "per side, so the other club's hitters are unaffected. A hitter "
             "whose opposing starter has not been announced is kept. Pass "
             "--no-exclude-openers to rank every posted hitter."
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Compute the Model column, the aggregate hit probability across "
+            "every calculator reporting a rate per plate appearance. Defaults "
+            "to enabled on a manual run and disabled with --scheduled, because "
+            "a hitter whose Statcast frame is not yet cached for today costs "
+            "roughly 78 seconds and a full slate does not fit a 15-minute cron. "
+            "The Model column is reported beside Prob %% and does not affect "
+            "the ranking, which is still Prob %%."
         ),
     )
     return parser
