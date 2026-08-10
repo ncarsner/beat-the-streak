@@ -36,7 +36,7 @@ from main import (
     format_model,
     format_delta,
     model_delta,
-    by_absolute_delta,
+    rank_key,
     probable_pitcher_id,
     refresh_opposing_pitchers,
     DEFAULT_COOLDOWN_DAYS,
@@ -1802,31 +1802,49 @@ def test_the_delta_renders_with_a_sign(value, rendered):
     assert format_delta(value) == rendered
 
 
-def test_rows_sort_by_absolute_delta_least_to_greatest():
-    rows = [_row("far", 0.80, 0.55), _row("near", 0.60, 0.62), _row("mid", 0.50, 0.60)]
-    assert [r["Player"] for r in sorted(rows, key=by_absolute_delta)] == [
-        "near",
-        "mid",
-        "far",
-    ]
+def test_probability_is_the_primary_sort():
+    rows = [_row("low", 0.40, 0.41), _row("high", 0.90, 0.20)]
+    assert [r["Player"] for r in sorted(rows, key=rank_key)] == ["high", "low"]
 
 
-def test_the_sort_ignores_the_direction_of_disagreement():
-    rows = [_row("over", 0.50, 0.60), _row("under", 0.50, 0.45)]
-    assert [r["Player"] for r in sorted(rows, key=by_absolute_delta)] == [
-        "under",
-        "over",
-    ]
+def test_a_large_disagreement_does_not_outrank_a_higher_probability():
+    """Delta breaks ties. It does not re-rank hitters the heuristic separates,
+    which would need a weighting nobody has measured."""
+    rows = [_row("high", 0.80, 0.79), _row("lower", 0.70, 0.95)]
+    assert [r["Player"] for r in sorted(rows, key=rank_key)][0] == "high"
 
 
-def test_rows_without_a_model_sort_last():
-    """They must not sort as zero, which would put them at the top of a table
-    ordered by agreement."""
-    rows = [_row("none", 0.90), _row("agrees", 0.60, 0.61)]
-    assert [r["Player"] for r in sorted(rows, key=by_absolute_delta)] == [
-        "agrees",
-        "none",
-    ]
+def test_the_lowest_delta_leads_among_equal_probabilities():
+    """The stated top of the table: highest probability, lowest model delta."""
+    rows = [_row("up", 0.75, 0.90), _row("down", 0.75, 0.60)]
+    assert [r["Player"] for r in sorted(rows, key=rank_key)] == ["down", "up"]
+
+
+def test_the_highest_positive_delta_trails_among_equal_probabilities():
+    """The stated bottom of the table: lowest probability, highest positive
+    delta. Same key, read from the other end."""
+    rows = [_row("worst", 0.30, 0.80), _row("agrees", 0.30, 0.31)]
+    assert [r["Player"] for r in sorted(rows, key=rank_key)][-1] == "worst"
+
+
+def test_the_secondary_key_is_signed_not_absolute():
+    """An absolute key collapses a model that disagrees upward with one that
+    disagrees downward, and the two ends of the table depend on telling them
+    apart."""
+    rows = [_row("over", 0.50, 0.70), _row("under", 0.50, 0.30)]
+    assert [r["Player"] for r in sorted(rows, key=rank_key)] == ["under", "over"]
+
+
+def test_rows_without_a_model_sort_after_resolved_rows_at_the_same_probability():
+    """Not a zero delta: nothing is known about the model's opinion, so he
+    cannot be placed between a disagreement and an agreement."""
+    rows = [_row("none", 0.50), _row("resolved", 0.50, 0.90)]
+    assert [r["Player"] for r in sorted(rows, key=rank_key)] == ["resolved", "none"]
+
+
+def test_an_unmodelled_row_still_sorts_by_probability():
+    rows = [_row("low", 0.20), _row("high", 0.80)]
+    assert [r["Player"] for r in sorted(rows, key=rank_key)] == ["high", "low"]
 
 
 def test_the_table_carries_a_delta_column(capsys):
@@ -1836,12 +1854,12 @@ def test_the_table_carries_a_delta_column(capsys):
     assert "+22.5" in out
 
 
-def test_the_table_orders_the_top_section_by_agreement(capsys):
-    rows = [_row("far", 0.90, 0.55), _row("near", 0.80, 0.81), _row("mid", 0.70, 0.62)]
+def test_the_table_leads_with_the_highest_probability(capsys):
+    rows = [_row("mid", 0.70, 0.62), _row("best", 0.90, 0.55), _row("next", 0.80, 0.81)]
     probable_hitters(rows, n=2)
     lines = [ln for ln in capsys.readouterr().out.splitlines() if "|" in ln]
-    order = [n for ln in lines for n in ("near", "mid", "far") if f" {n} " in ln]
-    assert order[:3] == ["near", "mid", "far"]
+    order = [n for ln in lines for n in ("best", "next", "mid") if f" {n} " in ln]
+    assert order[:3] == ["best", "next", "mid"]
 
 
 def test_selection_still_runs_off_the_heuristic(capsys):

@@ -979,14 +979,24 @@ same question, and showing both is the point.
 +-----------------+------+------+------+--------+-------+-------+
 ```
 
-**Rows run from least to greatest absolute `Delta`**, so the hitters the two methods agree
-on lead and the ones they disagree about most are last. *Selection* is unchanged and still
-runs off `Prob %`: the `n * 2` best and `n` worst, which is what the tool is for. Ordering
-by agreement inside each section keeps the separator meaningful, where a flat delta sort
-would leave it in an arbitrary position with best and worst picks interleaved either side.
+**`Prob %` is the primary sort, descending**, so the highest probabilities are at the top
+and the lowest at the bottom. `Delta` is the secondary key, **signed and ascending**, which
+puts the two required endpoints in place: the top row is the highest probability and, among
+hitters the heuristic rates equally, the lowest delta; the bottom row is the lowest
+probability and, among equals, the highest positive delta.
+
+Signed rather than absolute, because an absolute key collapses a model that disagrees
+upward with one that disagrees downward, and those belong at opposite ends.
+
+**The delta breaks ties; it does not re-rank.** Two hitters with different `Prob %` are
+ordered by `Prob %` alone however much the model disagrees. Ties are not rare, since
+`Prob %` is a function of a five-game line and any two hitters sharing hits, at bats and
+walks collide exactly, but on a slate of distinct lines the delta key is inert. Giving it
+enough weight to reorder unequal probabilities needs a weighting nobody has measured, which
+is #35 and #52.
 
 A hitter the model could not evaluate has **no** delta rather than a zero one, and sorts
-last. Scoring him as perfect agreement would put him at the top.
+after resolved rows at the same probability.
 
 **The two methods reorder, not just differ.** On that real slate Freeman is fourth on the
 heuristic and second on the model; Harper is first and fifth. The heuristic spans 41.6

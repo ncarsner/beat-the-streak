@@ -637,35 +637,57 @@ def format_delta(value: float | None) -> str:
     return f"{value * 100:+.1f}" if value is not None else "-"
 
 
-def by_absolute_delta(data: dict) -> tuple[int, float]:
-    """Sort key: smallest disagreement first, unresolved rows last.
+def rank_key(data: dict) -> tuple[float, int, float]:
+    """Sort key reconciling the heuristic ranking with the model's disagreement.
 
-    The leading flag pushes rows with no delta to the end rather than letting
-    them sort as zero. Within the resolved rows the key is the **absolute**
-    delta, so a hitter the model likes 3 points more and one it likes 3 points
-    less are equally close to agreement, which is what the ordering is about.
+    Ascending on this tuple puts **highest probability at the top and lowest at
+    the bottom**, which is what the tool ranks on and what the separator between
+    best picks and worst performers means. `Prob %` is the primary key and
+    nothing about the model displaces it.
+
+    `Delta` is the secondary key, **signed and ascending**, which resolves the two
+    endpoints the ordering has to satisfy:
+
+    - The top row is the highest probability and, among hitters the heuristic
+      rates equally, the **lowest** delta.
+    - The bottom row is the lowest probability and, among equals, the **highest
+      positive** delta: the hitter the heuristic likes least and the model
+      disagrees with most in his favour.
+
+    Signed, not absolute. An absolute secondary key cannot distinguish those two
+    ends, since it collapses a model that disagrees upward with one that
+    disagrees downward, and the whole point of the ordering is that they land at
+    opposite ends of the table.
+
+    **This is a tie-break, not a re-rank.** Two hitters with different `Prob %`
+    are ordered by `Prob %` alone however much the model disagrees. Ties are not
+    rare here: `Prob %` is a function of a five-game line, so any two hitters
+    sharing hits, at bats and walks collide exactly. Giving the delta weight
+    enough to reorder unequal probabilities would need a weighting nobody has
+    measured, which is #35.
+
+    A hitter with no model value sorts **after** resolved rows at the same
+    probability. He is not a zero delta: nothing is known about the model's
+    opinion, so he cannot be placed between a disagreement and an agreement.
     """
     delta = model_delta(data)
-    return (1, 0.0) if delta is None else (0, abs(delta))
+    return (
+        -data["probability"],
+        1 if delta is None else 0,
+        0.0 if delta is None else delta,
+    )
 
 
 def probable_hitters(summary_data, n=5):
     """Print the ranked table.
 
-    **Selection is by probability; ordering within each section is by agreement.**
-    Which hitters appear is unchanged: the `n * 2` best and `n` worst by
-    `Prob %`, which is what the tool is for. Inside each section rows run from
-    least to greatest absolute `Delta`, so the hitters the two methods agree on
-    lead and the ones they disagree about most are last.
-
-    Keeping the two sections rather than sorting the whole table by delta
-    preserves what the separator means. A flat delta sort would leave it in an
-    arbitrary position with best and worst picks interleaved either side.
+    Highest probability at the top, lowest at the bottom, with the model's
+    signed disagreement breaking ties; see `rank_key`. Selection is unchanged:
+    the `n * 2` best and `n` worst by `Prob %`, separated by a divider row.
     """
-    # Selection still runs off the heuristic, which is still what ranks.
-    summary_data.sort(key=lambda x: x["probability"], reverse=True)
-    top_players = sorted(summary_data[: n * 2], key=by_absolute_delta)
-    low_players = sorted(summary_data[-n:], key=by_absolute_delta)
+    summary_data.sort(key=rank_key)
+    top_players = summary_data[: n * 2]
+    low_players = summary_data[-n:]
 
     table = PrettyTable()
     today = datetime.today()
