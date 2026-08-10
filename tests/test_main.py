@@ -34,6 +34,9 @@ from main import (
     opener_pitcher_ids,
     drop_opener_matchups,
     format_model,
+    format_delta,
+    model_delta,
+    by_absolute_delta,
     probable_pitcher_id,
     refresh_opposing_pitchers,
     DEFAULT_COOLDOWN_DAYS,
@@ -1757,3 +1760,102 @@ def test_a_failing_model_evaluation_does_not_take_down_the_run(monkeypatch):
     player = {"id": 1, "fullName": "A", "game_pk": 700001}
     context = {"schedule": {}, "lineups": {}, "today": None, "season": 2026}
     assert main.player_model_probability(player, context) is None
+
+
+# ---- Delta column and agreement ordering ----
+
+
+def _row(name, probability, model=None):
+    return {
+        "Player": name,
+        "Team": "NYY",
+        "Hits": 5,
+        "At Bats": 10,
+        "Walks": 1,
+        "Strikeouts": 2,
+        "probability": probability,
+        **({"model": model} if model is not None else {}),
+    }
+
+
+def test_the_delta_is_model_minus_the_heuristic():
+    assert model_delta(_row("A", 0.50, 0.725)) == pytest.approx(0.225)
+
+
+def test_the_delta_is_signed_so_direction_survives():
+    """Two methods disagreeing by 20 points in opposite directions are different
+    findings, and an absolute value would collapse them."""
+    assert model_delta(_row("A", 0.80, 0.60)) < 0
+    assert model_delta(_row("B", 0.60, 0.80)) > 0
+
+
+def test_an_unresolved_model_has_no_delta():
+    """Not a zero delta. A hitter the model could not evaluate has no
+    disagreement to report."""
+    assert model_delta(_row("A", 0.50)) is None
+
+
+@pytest.mark.parametrize(
+    "value, rendered", [(0.225, "+22.5"), (-0.18, "-18.0"), (0.0, "+0.0"), (None, "-")]
+)
+def test_the_delta_renders_with_a_sign(value, rendered):
+    assert format_delta(value) == rendered
+
+
+def test_rows_sort_by_absolute_delta_least_to_greatest():
+    rows = [_row("far", 0.80, 0.55), _row("near", 0.60, 0.62), _row("mid", 0.50, 0.60)]
+    assert [r["Player"] for r in sorted(rows, key=by_absolute_delta)] == [
+        "near",
+        "mid",
+        "far",
+    ]
+
+
+def test_the_sort_ignores_the_direction_of_disagreement():
+    rows = [_row("over", 0.50, 0.60), _row("under", 0.50, 0.45)]
+    assert [r["Player"] for r in sorted(rows, key=by_absolute_delta)] == [
+        "under",
+        "over",
+    ]
+
+
+def test_rows_without_a_model_sort_last():
+    """They must not sort as zero, which would put them at the top of a table
+    ordered by agreement."""
+    rows = [_row("none", 0.90), _row("agrees", 0.60, 0.61)]
+    assert [r["Player"] for r in sorted(rows, key=by_absolute_delta)] == [
+        "agrees",
+        "none",
+    ]
+
+
+def test_the_table_carries_a_delta_column(capsys):
+    probable_hitters([_row("A", 0.50, 0.725)], n=1)
+    out = capsys.readouterr().out
+    assert "Delta" in out
+    assert "+22.5" in out
+
+
+def test_the_table_orders_the_top_section_by_agreement(capsys):
+    rows = [_row("far", 0.90, 0.55), _row("near", 0.80, 0.81), _row("mid", 0.70, 0.62)]
+    probable_hitters(rows, n=2)
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "|" in ln]
+    order = [n for ln in lines for n in ("near", "mid", "far") if f" {n} " in ln]
+    assert order[:3] == ["near", "mid", "far"]
+
+
+def test_selection_still_runs_off_the_heuristic(capsys):
+    """Which hitters appear is unchanged. Only the order within a section moved."""
+    rows = [_row(f"P{i}", 0.9 - i / 100, 0.5) for i in range(20)]
+    probable_hitters(rows, n=2)
+    out = capsys.readouterr().out
+    assert "P0" in out  # highest probability, still shown
+    assert "P19" in out  # lowest probability, still shown
+    assert "P10" not in out  # middle of the pack, still omitted
+
+
+def test_a_table_without_any_model_still_renders(capsys):
+    """With --no-model every delta is None, so the sort is inert and the table
+    keeps its probability order."""
+    probable_hitters([_row("A", 0.9), _row("B", 0.5)], n=1)
+    assert "Delta" in capsys.readouterr().out

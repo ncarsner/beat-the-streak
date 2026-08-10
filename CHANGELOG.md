@@ -11,6 +11,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`Model` column in the ranked table**, beside `Prob %`. Pools 27 calculators, every
   shipped key reporting hits per plate appearance, weighted by sample size, through
   `CALC_76` with the Category 6 plate-appearance projection.
+- **`Delta` column**, `Model` minus `Prob %` in percentage points, signed. Rows now run
+  from least to greatest **absolute** delta within each section, so the hitters the two
+  methods agree on lead and the biggest disagreements are last. Selection is unchanged and
+  still runs off `Prob %`; only the ordering inside each section moved, which keeps the
+  separator between best picks and worst performers meaningful. A hitter the model could
+  not evaluate has no delta rather than a zero one, and sorts last.
 - `calculators/pipeline.py`, the single place that turns a hitter-game into all 108
   calculator keys. `main.py` and the coverage script both use it.
 - `calculators.category_11_composite.aggregate_hit_rate` and `P_HIT_SCALE_KEYS`.

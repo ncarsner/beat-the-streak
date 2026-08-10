@@ -963,24 +963,36 @@ same question, and showing both is the point.
 **The ranking is still `Prob %`.** Neither number has been validated against outcomes
 (#35), so `Model` is reported beside the heuristic rather than replacing it.
 
+- **`Delta`** is `Model` minus `Prob %`, in percentage points. Signed, because the two
+  methods disagreeing by 20 points in opposite directions are different findings.
+
 ```
-+-----------------+------+------+------+--------+-------+
-|      Player     | Team | H-AB | BB/K | Prob % | Model |
-+-----------------+------+------+------+--------+-------+
-|   Bryce Harper  | PHI  | 5-17 | 8/4  | 82.5%  | 64.5% |
-|   Jake Mangum   | PIT  | 6-19 | 2/4  | 79.7%  | 73.0% |
-|  Ernie Clement  | TOR  | 6-23 | 0/5  | 75.1%  | 67.3% |
-| Freddie Freeman | LAD  | 3-18 | 1/1  | 50.0%  | 72.5% |
-| Randy Arozarena | SEA  | 3-19 | 1/3  | 49.7%  | 64.4% |
-|   Ketel Marte   | ARI  | 2-17 | 4/5  | 40.9%  | 62.4% |
-+-----------------+------+------+------+--------+-------+
++-----------------+------+------+------+--------+-------+-------+
+|      Player     | Team | H-AB | BB/K | Prob % | Model | Delta |
++-----------------+------+------+------+--------+-------+-------+
+|   Jake Mangum   | PIT  | 6-19 | 2/4  | 79.7%  | 73.0% |  -6.7 |
+|  Ernie Clement  | TOR  | 6-23 | 0/5  | 75.1%  | 67.2% |  -7.9 |
+| Randy Arozarena | SEA  | 3-19 | 1/3  | 49.7%  | 64.5% | +14.8 |
+|   Bryce Harper  | PHI  | 5-17 | 8/4  | 82.5%  | 64.3% | -18.1 |
+|   Ketel Marte   | ARI  | 2-17 | 4/5  | 40.9%  | 62.4% | +21.5 |
+| Freddie Freeman | LAD  | 3-18 | 1/1  | 50.0%  | 72.4% | +22.4 |
++-----------------+------+------+------+--------+-------+-------+
 ```
 
-**They reorder, not just differ.** On that real slate Freeman is fourth on the heuristic and
-second on the model; Harper is first and fifth. The heuristic spans 41.6 points and the
-model 10.6, which is what a 17-plate-appearance sample versus a several-thousand one should
-look like. A dash means the model did not resolve, which is a different statement from a low
-probability.
+**Rows run from least to greatest absolute `Delta`**, so the hitters the two methods agree
+on lead and the ones they disagree about most are last. *Selection* is unchanged and still
+runs off `Prob %`: the `n * 2` best and `n` worst, which is what the tool is for. Ordering
+by agreement inside each section keeps the separator meaningful, where a flat delta sort
+would leave it in an arbitrary position with best and worst picks interleaved either side.
+
+A hitter the model could not evaluate has **no** delta rather than a zero one, and sorts
+last. Scoring him as perfect agreement would put him at the top.
+
+**The two methods reorder, not just differ.** On that real slate Freeman is fourth on the
+heuristic and second on the model; Harper is first and fifth. The heuristic spans 41.6
+points and the model 10.6, which is what a 17-plate-appearance sample versus a
+several-thousand one should look like. A dash means the model did not resolve, which is a
+different statement from a low probability.
 
 Membership in the aggregate is an **explicit list**, not a filter on the `PROBABILITY` role
 tag, because the tag does not mean what its name suggests. Category 1 tags a hard-hit rate

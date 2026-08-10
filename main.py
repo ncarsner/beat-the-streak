@@ -607,58 +607,98 @@ def format_model(value: float | None) -> str:
     return f"{value:.1%}" if value is not None else "-"
 
 
+def model_delta(data: dict) -> float | None:
+    """Model probability minus the heuristic, in probability points, or None.
+
+    **Signed, and the sign is Model minus `Prob %`**, so positive means the model
+    likes this hitter more than the five-game heuristic does. The sign carries
+    the interesting half of the information: the two methods disagreeing by 20
+    points in opposite directions are different findings, and an absolute value
+    would collapse them.
+
+    None when the model did not resolve, which is not a zero delta. A hitter the
+    model could not evaluate has no disagreement to report, and scoring him as
+    perfect agreement would put him at the top of a table sorted by agreement.
+    """
+    model = data.get("model")
+    if model is None or data.get("probability") is None:
+        return None
+    return model - data["probability"]
+
+
+def format_delta(value: float | None) -> str:
+    """Render a signed delta in **percentage points**, or a dash.
+
+    `Prob %` and `Model` are both printed as percentages, so the difference
+    between them reads as points: a .500 heuristic against a .725 model prints
+    as `+22.5`, not `+0.2`. The scaling is here rather than in `model_delta`,
+    which stays in probability units like everything else in the model.
+    """
+    return f"{value * 100:+.1f}" if value is not None else "-"
+
+
+def by_absolute_delta(data: dict) -> tuple[int, float]:
+    """Sort key: smallest disagreement first, unresolved rows last.
+
+    The leading flag pushes rows with no delta to the end rather than letting
+    them sort as zero. Within the resolved rows the key is the **absolute**
+    delta, so a hitter the model likes 3 points more and one it likes 3 points
+    less are equally close to agreement, which is what the ordering is about.
+    """
+    delta = model_delta(data)
+    return (1, 0.0) if delta is None else (0, abs(delta))
+
+
 def probable_hitters(summary_data, n=5):
-    # Sort summary data based on descending probability
+    """Print the ranked table.
+
+    **Selection is by probability; ordering within each section is by agreement.**
+    Which hitters appear is unchanged: the `n * 2` best and `n` worst by
+    `Prob %`, which is what the tool is for. Inside each section rows run from
+    least to greatest absolute `Delta`, so the hitters the two methods agree on
+    lead and the ones they disagree about most are last.
+
+    Keeping the two sections rather than sorting the whole table by delta
+    preserves what the separator means. A flat delta sort would leave it in an
+    arbitrary position with best and worst picks interleaved either side.
+    """
+    # Selection still runs off the heuristic, which is still what ranks.
     summary_data.sort(key=lambda x: x["probability"], reverse=True)
+    top_players = sorted(summary_data[: n * 2], key=by_absolute_delta)
+    low_players = sorted(summary_data[-n:], key=by_absolute_delta)
 
-    # n highest probability players
-    top_players = summary_data[: n * 2]
-
-    # n lowest probability players
-    low_players = summary_data[-n:]
-
-    # Create and populate the table
     table = PrettyTable()
     today = datetime.today()
     table.title = f"{today.strftime('%B')} {today.day}, {today.year}"
-    # `Model` sits next to `Prob %` deliberately: the two are different answers
-    # to the same question and the point of showing both is the comparison.
-    # `Prob %` is the shipped heuristic, a 5-game average put through the
-    # binomial with a `pa / 5` exponent. `Model` is the 76-calculator aggregate.
-    # Neither has been validated against outcomes yet (#35), so the ranking is
-    # still `Prob %` and `Model` is reported beside it, not instead of it.
-    table.field_names = ["Player", "Team", "H-AB", "BB/K", "Prob %", "Model"]
+    # `Model` and `Delta` sit next to `Prob %` deliberately: the two probabilities
+    # are different answers to the same question and the point of showing both is
+    # the comparison. `Prob %` is the shipped heuristic, a 5-game average put
+    # through the binomial with a `pa / 5` exponent. `Model` is the aggregate over
+    # every calculator reporting a rate per plate appearance. Neither has been
+    # validated against outcomes yet (#35), so the ranking is still `Prob %`.
+    table.field_names = ["Player", "Team", "H-AB", "BB/K", "Prob %", "Model", "Delta"]
 
-    for data in top_players:
-        probability = f"{data['probability']:.1%}"
+    def add(data):
         table.add_row(
             [
                 data["Player"],
                 data["Team"],
                 f"{data['Hits']}-{data['At Bats']}",
                 f"{data['Walks']}/{data['Strikeouts']}",
-                probability,
+                f"{data['probability']:.1%}",
                 format_model(data.get("model")),
+                format_delta(model_delta(data)),
             ]
         )
 
-    # Separator row
+    for data in top_players:
+        add(data)
+
     table.add_row(["---"] * len(table.field_names))
 
     for data in low_players:
-        probability = f"{data['probability']:.1%}"
-        table.add_row(
-            [
-                data["Player"],
-                data["Team"],
-                f"{data['Hits']}-{data['At Bats']}",
-                f"{data['Walks']}/{data['Strikeouts']}",
-                probability,
-                format_model(data.get("model")),
-            ]
-        )
+        add(data)
 
-    # Display the output
     print(table)
 
 
