@@ -11,12 +11,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`Model` column in the ranked table**, beside `Prob %`. Pools 27 calculators, every
   shipped key reporting hits per plate appearance, weighted by sample size, through
   `CALC_76` with the Category 6 plate-appearance projection.
-- **`Delta` column**, `Model` minus `Prob %` in percentage points, signed. Rows now run
-  from least to greatest **absolute** delta within each section, so the hitters the two
-  methods agree on lead and the biggest disagreements are last. Selection is unchanged and
-  still runs off `Prob %`; only the ordering inside each section moved, which keeps the
-  separator between best picks and worst performers meaningful. A hitter the model could
-  not evaluate has no delta rather than a zero one, and sorts last.
+- **`Delta` column**, `Model` minus `Prob %` in percentage points, signed.
 - `calculators/pipeline.py`, the single place that turns a hitter-game into all 108
   calculator keys. `main.py` and the coverage script both use it.
 - `calculators.category_11_composite.aggregate_hit_rate` and `P_HIT_SCALE_KEYS`.
@@ -24,6 +19,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `--scheduled`**.
 - `scripts/evaluate_sample_coverage.py`, measuring how many calculator values resolve for
   the `ROADMAP.md` sample batters against a day's posted lineups.
+
+### Changed
+- **Table sort reconciled.** `rank_key` is `(-probability, unresolved_flag, signed_delta)`:
+  `Prob %` primary and descending, so highest probability is at the top and lowest at the
+  bottom, with signed `Delta` as the secondary key. That places both required endpoints,
+  highest probability with lowest delta first and lowest probability with highest positive
+  delta last, which an absolute secondary key cannot do. Selection is unchanged and still
+  runs off `Prob %`. A hitter the model could not evaluate has no delta rather than a zero
+  one, and sorts last.
+- **`Delta` currently breaks exact ties only.** On a slate where every hitter's `Prob %`
+  differs it never fires, so the model has no influence on the ordering today. How much
+  weight it should carry is #52.
 
 ### Notes
 - **Coverage on the 2026-08-09 slate: 90.4% of 1,080 keys usable** across the 10 sample
