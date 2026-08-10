@@ -850,6 +850,105 @@ about Categories 1 through 4 missing.
 
 Every value was independently reproduced from raw API JSON before the module was trusted.
 
+### Excluding openers
+
+This tool ranks scheduled hitters against **traditional starting pitchers**. An opener's
+start is a different matchup than the one being modelled, so `--exclude-openers` drops
+those hitters and is **on by default**. Pass `--no-exclude-openers` to rank every posted
+hitter.
+
+```bash
+python3 main.py                        # openers excluded (default)
+python3 main.py --no-exclude-openers   # rank everyone
+```
+
+Three decisions, none of them forced:
+
+- **Per side, not per game.** A club using an opener does not stop the other club from
+  starting a conventional pitcher, so dropping the whole game would discard nine hitters
+  facing exactly what this tool is about. The filter keys on each hitter's
+  `opposing_pitcher_id`.
+- **A hitter whose opposing starter is unannounced is kept.** No probable is weak evidence
+  *for* an opener, so the other reading is defensible, but dropping a playable matchup over
+  a missing field is the worse failure, and the field was populated on 60 of 60 sides
+  across the two slates probed.
+- **The gate carries its own rule rather than calling `CALC_51`.** The calculator returns
+  `None` for a pitcher who has never started, which is right as a measurement and wrong as
+  a decision: a reliever announced as today's starter is the clearest opener there is.
+  `is_opener` adds that case through `relief_share`.
+
+The gate runs after the lineup loop and never inside `queried_games_cache`, so it inherits
+`refresh_opposing_pitchers`. A game dropped at 14:00 for an announced opener comes back at
+14:15 if he is scratched. It costs one batched request per run covering every probable
+starter on the slate.
+
+Verified on the 2026-08-09 slate: 2 of 30 announced starters flagged, Erik Miller (41
+appearances, 1 start of 5 batters, .968 relief share) and Brad Lord (11.0 batters per
+start, .916), dropping 18 of 270 hitters and leaving the other side of both games intact.
+
+**Bullpens are disregarded.** Category 7's `CALC_47`, `CALC_48`, `CALC_49` and `CALC_50`
+measure a bullpen and are out of scope for the composite model; the modules remain so a
+later decision can use them. `CALC_51` was promoted out of the category into this gate.
+
+### The composite model
+
+`category_11_composite.py` implements Category 11 (`CALC_72`-`CALC_76`), the end of the
+pipeline, and **completes the ROADMAP at 76 of 76**.
+
+```
+CALC_72  season base rate      \
+CALC_73  14-day weighted rate   >--  CALC_75 posterior  -->  CALC_76 P(>=1 hit)
+CALC_74  matchup-conditioned   /
+```
+
+| Calculator | Value | Role |
+|---|---|---|
+| `CALC_72` | season hits per plate appearance | `PROBABILITY` |
+| `CALC_73` | recency-weighted 14-day hit rate | `PROBABILITY` |
+| `CALC_74` | hit rate conditioned on BvP, platoon and pitch type | `PROBABILITY` |
+| `CALC_75` | Beta-Binomial posterior blending the three | `PROBABILITY` |
+| `CALC_76` | `1 - (1 - p_hit) ** PA_proj` | `PROBABILITY` |
+
+**This category was carried as blocked on #34 and #39, and needed neither resolved.** The
+distinction that unblocked it: a number that comes from the data can be computed, and a
+number that comes from nowhere has to be a parameter. Every `Rate` in the model carries its
+own denominator, so the sample-size weighting across `CALC_72`, `CALC_73` and `CALC_74` is
+derived rather than invented. The one quantity that is not in the data is how far to trust
+the prior, so `prior_strength` is a parameter, defaulting to the season sample's own size,
+which makes `CALC_75` a plain precision-weighted mean until #34 rules.
+
+**`CALC_75` uses the hitter's own season rate as the prior, not a league mean.** The
+textbook formulation wants a league rate, which does not exist in this repo while #38
+blocks the league-wide pull, and inventing one is what `CALC_34` refused to do. The
+hitter's own line costs the between-player pooling a league prior would give, and degrades
+gracefully: a thin season line is a weak prior automatically, which is the behaviour
+shrinkage is for.
+
+**#39 stays open and stays irrelevant here**, because every input the module accepts is
+already a `p_hit`-scale rate. It takes no `MULTIPLIER` and no `DELTA`; the mapping #39 owes
+is for values that are not on this scale, and none are used.
+
+Two overlaps are recorded rather than silently blended:
+
+- `CALC_73` is `CALC_54`'s window with an exponential decay applied, and converges on it
+  exactly as the half-life grows. A composite should read one or the other, never both.
+  Same shape as `CALC_31` inside `CALC_32`.
+- **`CALC_76` is the one `PROBABILITY` in the model that must never re-enter `p_hit`.** It
+  is a per-game probability, not a per-plate-appearance rate, and blending it back in
+  applies the binomial twice. `CALC_52` documents the same trap from the other end.
+
+`PA_proj` is composed from Category 6's two `EXPONENT` keys, `CALC_41` plus the signed
+`CALC_45`, rather than reaching for `main.py`'s `pa / 5`, which is a different quantity
+entirely.
+
+Verified live against a real hitter's 1,227 pitch records: `CALC_72` (53 hits in 261 plate
+appearances), `CALC_73` (.16343 over 52, against .15385 unweighted, so the decay is doing
+real work rather than rounding) and `CALC_75` each reproduced independently from raw
+records.
+
+**The ranked table still comes from `binomial_probability`.** Switching it to `CALC_76` is
+a one-line change and a deliberate decision with no validation behind it yet, which is #35.
+
 ### Output format
 
 ```

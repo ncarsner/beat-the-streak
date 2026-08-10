@@ -5,6 +5,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-09 (Category 11 and the opener gate)
+
+### Added
+- `--exclude-openers` / `--no-exclude-openers` in `main.py`, **on by default**. Drops
+  hitters whose opposing starter profiles as an opener rather than a conventional
+  starting pitcher. Filtering is **per side**, so the other club's hitters are kept.
+- Category 11 composite calculators (`CALC_72`-`CALC_76`) in
+  `calculators/category_11_composite.py`. **The ROADMAP is now complete at 76 of 76.**
+
+### Changed
+- **Scope, per the user**: bullpens are disregarded and this tool ranks scheduled hitters
+  against traditional starting pitchers. `CALC_74` takes no Category 7 input, and
+  `CALC_47`/`CALC_48`/`CALC_49`/`CALC_50` are out of scope for the composite. Category 7
+  is benched, not deleted; `CALC_51` was promoted out of it into the opener gate.
+- `main.py` now imports from `calculators/` during a run, for the first time. The opener
+  gate is the only such call; the ranked table is still computed from
+  `binomial_probability`.
+
+### Notes
+- **The opener gate carries its own rule rather than calling `CALC_51`.** The calculator
+  returns None for a pitcher who has never started, which is right as a measurement and
+  wrong as a decision: a reliever announced as today's starter is the clearest opener
+  there is. `is_opener` adds that case via `relief_share`.
+- A hitter whose opposing starter is **unannounced is kept**. Dropping a playable matchup
+  over a missing field is the worse failure.
+- The gate runs after the lineup loop and never inside `queried_games_cache`, so it
+  inherits `refresh_opposing_pitchers`: a game dropped for an announced opener returns on
+  the next tick if he is scratched.
+- **Category 11 did not need #34 or #39 resolved.** Sample-size weighting comes from the
+  data, since every `Rate` carries its denominator. The one quantity that does not is how
+  far to trust the prior, so `prior_strength` is a parameter defaulting to the season
+  sample's own size. `CALC_75` uses the hitter's **own season rate** as the prior rather
+  than a league mean, which does not exist while #38 is open.
+- Two overlaps recorded rather than blended: `CALC_73` is `CALC_54`'s window with a decay
+  and converges on it as the half-life grows, and `CALC_76` is the one `PROBABILITY` in
+  the model that must never re-enter `p_hit`.
+- Unwired: the ranked table is unchanged. Switching it to `CALC_76` is a deliberate call
+  with no validation behind it, which is #35. 1468 tests passing.
+
+---
+
 ## 2026-08-09 (Category 7)
 
 ### Added
