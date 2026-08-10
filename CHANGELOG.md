@@ -5,6 +5,62 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-10
+
+### Added
+- **Forward test of the model against the heuristic**, the first work in the repo that
+  produces evidence for #35. `scripts/record_daily_picks.py` snapshots a day's picks before
+  first pitch; `scripts/grade_daily_picks.py` grades them once games are final and reports
+  top-1 and top-5 hit rate, Brier and log loss for both methods.
+  Snapshots live in `data/picks/`, **tracked in git unlike everything under `.cache/`**: a
+  snapshot cannot be regenerated, because tomorrow the season pull already contains today's
+  games.
+- **Email notifications**, alongside SMS, on stdlib `smtplib` with no new dependency. Same
+  contract as the SMS path: per-`GameHourUTC` grouping, top 5, a send returning False rather
+  than raising, and a sent-cache marked only on success. The email carries every table
+  column including `BB/K`, where the SMS carries name and probability only.
+  Requires `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SUBSCRIBER_EMAIL`; optional
+  `SMTP_PORT` (587) and `SMTP_FROM`.
+- Table rendering for both forward-test scripts, plus `--show`, `--top-n` and `--detail`.
+
+### Fixed
+- **Every run that fetched a fresh lineup crashed.** `process_game_lineup` writes `start_dt`,
+  a `datetime`, and `json.dump` cannot serialize it. The crash landed two statements before
+  `probable_hitters`, so a run that fetched every hitter successfully printed no table, sent
+  no SMS, and left a truncated cache file behind.
+  **Cached runs survived degraded, which is why this went unnoticed**: entries written before
+  `start_dt` existed carry no `game_pk`, so `player_model_probability` resolved the schedule
+  to `{}` and the lineup side to `[]`, silently emptying Category 5, `CALC_41` and `CALC_70`.
+  The broad `except` swallowed it. Verified after the fix: 102 of 108 keys resolve.
+  The pre-existing round-trip test passed throughout because it round-trips a hand-built dict
+  the producer has never written.
+- **The grader scored an entire unplayed slate as no-hit.** A Pre-Game boxscore already
+  publishes a fully zeroed batting line for every hitter in a posted lineup, indistinguishable
+  from a real 0-for-4, so reading the boxscore alone reported a confident 0% base rate hours
+  before first pitch. Game status now comes from the schedule.
+- `--top-n 1` crashed the grader summary: both hit-rate columns became `top-1` and
+  PrettyTable rejects duplicate field names.
+
+### Changed
+- `.github/workflows/sms-notify.yml` renamed to `notify.yml`, now driving both channels. The
+  `schedule:` trigger stays commented out until #49 is fixed.
+
+### Notes
+- **The two methods disagree about who the best pick is, not merely how to score him.** On
+  the 2026-08-10 slate of 49 hitters the heuristic spans 74.0 points and the model 24.3
+  (sd 20.5 against 4.7), and the model's top pick sits 21st on the heuristic. Nothing here is
+  validated: the ranking is still `Prob %` and #35 owns the question.
+- A retrospective backtest is **structurally partial**, measured rather than assumed:
+  replaying 2026-05-01 for one probe hitter surfaced 1573 of 2500 pitch records, 62.9%, dated
+  after the replay date. Statcast is rewindable with an `end` bound; Category 1's
+  `stats=vsPlayer` and the `statSplits` calls return season-to-date aggregates with no date
+  parameter and cannot be rewound from the API at all.
+- **#50's cost figure is overstated by roughly an order of magnitude.** Measured today: 50
+  hitters cold in 5m27s, about 6.5s each, against the 78s per hitter that issue records as
+  the reason the model is off by default under `--scheduled`.
+
+---
+
 ## 2026-08-09 (Model column)
 
 ### Added
