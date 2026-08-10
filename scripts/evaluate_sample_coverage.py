@@ -35,37 +35,13 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
-import statistics
 import sys
 import traceback
 from typing import Any
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
 
-from calculators import baselines  # noqa: E402
-from calculators.category_01_bvp_matchups import compute_category_01  # noqa: E402
-from calculators.category_02_platoon_splits import compute_category_02  # noqa: E402
-from calculators.category_03_pitch_arsenal import compute_category_03  # noqa: E402
-from calculators.category_04_plate_discipline import compute_category_04  # noqa: E402
-from calculators.category_05_ballpark_environment import (  # noqa: E402
-    compute_category_05,
-)
-from calculators.category_06_lineup_game_context import (  # noqa: E402
-    compute_category_06,
-)
-from calculators.category_08_batter_form import compute_category_08  # noqa: E402
-from calculators.category_09_pitcher_form import compute_category_09  # noqa: E402
-from calculators.category_10_defense_schedule import compute_category_10  # noqa: E402
-from calculators.category_11_composite import compute_category_11  # noqa: E402
-from calculators.sources import category_01_bvp_matchups as src01  # noqa: E402
-from calculators.sources import category_02_platoon_splits as src02  # noqa: E402
-from calculators.sources import category_03_pitch_arsenal as src03  # noqa: E402
-from calculators.sources import category_04_plate_discipline as src04  # noqa: E402
-from calculators.sources import category_05_ballpark_environment as src05  # noqa: E402
-from calculators.sources import category_06_lineup_game_context as src06  # noqa: E402
-from calculators.sources import category_08_batter_form as src08  # noqa: E402
-from calculators.sources import category_09_pitcher_form as src09  # noqa: E402
-from calculators.sources import category_10_defense_schedule as src10  # noqa: E402
+from calculators.pipeline import assemble  # noqa: E402
 from main import fetch_lineup, fetch_schedule, is_opener  # noqa: E402
 from calculators.sources.category_07_bullpen_exposure import (  # noqa: E402
     fetch_pitching_game_logs,
@@ -117,23 +93,6 @@ INDICATOR_KEYS = {
     "CALC_64",
     "CALC_69_TURNAROUND_HOURS",
 }
-
-# Statcast populates `arm_angle` only from 2024 and only on swings; see the
-# Category 3 notes. Averaging what is there is still the right estimate.
-ARM_ANGLE_MIN_SEASON = 2024
-
-
-def resolve_arm_angle(pitcher_pitches: list[dict]) -> float | None:
-    """Mean arm angle over the starter's tracked pitches, or None.
-
-    Derived here rather than left unset. `compute_category_02` takes
-    `starter_arm_angle` as a parameter and no fetcher produces it, so passing
-    None would make `CALC_14` look unreachable when it is merely unfetched.
-    """
-    angles = [
-        float(p["arm_angle"]) for p in pitcher_pitches if p.get("arm_angle") is not None
-    ]
-    return statistics.fmean(angles) if angles else None
 
 
 def classify(key: str, value: Any, supplied: bool) -> str:
@@ -201,158 +160,32 @@ def posted_hitters(day: str) -> tuple[dict[str, dict], list[dict]]:
 
 
 def evaluate(hitter: dict, season: int, today: datetime.date) -> dict[str, Any]:
-    """Run every category for one hitter and return {key: (value, supplied)}."""
-    batter_id = hitter["id"]
-    pitcher_id = hitter["opposing_pitcher_id"]
-    game = hitter["game"]
-    results: dict[str, tuple[Any, bool]] = {}
+    """Run every category for one hitter and return {key: (value, supplied)}.
 
-    hands = src02.fetch_handedness(
-        [batter_id, pitcher_id] if pitcher_id else [batter_id]
-    )
-    # `fetch_handedness` keys these "bats" and "throws". Reading them as
-    # "bat_side"/"pitch_hand" silently emptied all of Category 2 on the first
-    # dry run, which the classifier then reported as an empty sample rather than
-    # as the harness defect it was. Exactly why the missing/empty split exists.
-    bat_side = (hands.get(batter_id) or {}).get("bats")
-    throws = (hands.get(pitcher_id) or {}).get("throws") if pitcher_id else None
+    A thin wrapper over `calculators.pipeline.assemble`, which is what `main.py`
+    uses for the `Model` column. Sharing it is the point: a coverage measurement
+    taken against a different assembly than the one that ships would measure the
+    wrong thing.
 
-    batter_pitches = src02.fetch_batter_statcast(batter_id, season)
-    pitcher_pitches = (
-        src02.fetch_pitcher_statcast(pitcher_id, season) if pitcher_id else []
-    )
-
-    # Category 1
-    bvp = (
-        src01.fetch_bvp_stats(batter_id, pitcher_id)
-        if pitcher_id
-        else src01.empty_bvp()
-    )
-    bvp_pitches = (
-        src01.fetch_bvp_statcast(batter_id, pitcher_id, season) if pitcher_id else []
-    )
-    for key, value in compute_category_01(bvp, season, bvp_pitches).items():
-        results[key] = (value, bool(pitcher_id))
-
-    # Category 2
-    hitter_splits = src02.fetch_stat_splits(batter_id, "hitting", season)
-    pitcher_splits = (
-        src02.fetch_stat_splits(pitcher_id, "pitching", season) if pitcher_id else {}
-    )
-    arsenal = src03.fetch_pitcher_arsenal(pitcher_id, season) if pitcher_id else []
-    # Read off Category 2's projection, not Category 3's. Both come from the same
-    # cached Statcast frame, but only Category 2 projects `arm_angle`, so
-    # reading the arsenal records returns None for every pitcher and CALC_14
-    # looks unreachable when it is merely unprojected.
-    arm_angle = resolve_arm_angle(pitcher_pitches)
-    cat2 = compute_category_02(
-        hitter_splits=hitter_splits,
-        pitcher_splits=pitcher_splits,
-        hitter_pitches=batter_pitches,
-        pitcher_pitches=pitcher_pitches,
-        batter_side=bat_side,
-        pitcher_throws=throws,
-        starter_arm_angle=arm_angle,
-        league_baseline=baselines.load_league_platoon_baseline(),
-        today=today,
-    )
-    for key, value in cat2.items():
-        results[key] = (value, True)
-
-    # Category 3
-    batter_arsenal = src03.fetch_batter_arsenal(batter_id, season)
-    for key, value in compute_category_03(batter_arsenal, arsenal).items():
-        results[key] = (value, bool(pitcher_id))
-
-    # Category 4
-    cat4 = compute_category_04(
-        src04.fetch_batter_discipline(batter_id, season),
-        src04.fetch_pitcher_discipline(pitcher_id, season) if pitcher_id else [],
-    )
-    for key, value in cat4.items():
-        results[key] = (value, True)
-
-    # Category 5
-    environment = src05.environment_from_schedule(hitter["raw_game"], hitter["is_home"])
-    # Merged under, not over: `fetch_game_environment` returns the full key set
-    # with None for anything the boxscore does not carry, so a plain `.update`
-    # overwrites the schedule half with nulls. Cost `batter_is_home` and
-    # `day_night` on the first dry run, which emptied CALC_37 and CALC_38.
-    for key, value in src05.fetch_game_environment(game["gamePk"]).items():
-        if value is not None:
-            environment[key] = value
-    cat5 = compute_category_05(
-        environment=environment,
-        ballparks=baselines.load_ballparks(),
-        park_factors=baselines.load_park_factors(),
-        batter_pitches=src05.fetch_batter_spray(batter_id, season),
-        batter_splits=src05.fetch_situational_splits(batter_id, "hitting", season),
-        pitcher_splits=(
-            src05.fetch_situational_splits(pitcher_id, "pitching", season)
-            if pitcher_id
-            else {}
-        ),
-        bat_side=bat_side,
-    )
-    for key, value in cat5.items():
-        results[key] = (value, True)
-
-    # Category 6
-    side = hitter["lineup"][hitter["side"]]
-    rates = src06.fetch_lineup_rates([p["id"] for p in side], season)
-    cat6 = compute_category_06(
+    The `supplied` flag is this script's own addition, and it is what separates
+    "the input arrived and was empty" from "this harness did not pass it". Only
+    the keys with no reachable source at all are marked unsupplied.
+    """
+    results = assemble(
+        hitter["id"],
+        hitter["opposing_pitcher_id"],
+        raw_game=hitter["raw_game"],
+        game_pk=hitter["game"]["gamePk"],
+        team_id=hitter.get("team_id"),
+        lineup_side=hitter["lineup"][hitter["side"]],
         lineup_spot=hitter.get("lineup_spot"),
-        lineup=src06.lineup_by_spot(side, rates),
-        pitcher_pitches=src06.fetch_pitcher_tto(pitcher_id, season)
-        if pitcher_id
-        else [],
-        batter_pitches=src06.fetch_batter_tto(batter_id, season),
-        batter_is_home=hitter["is_home"],
-        game_context=baselines.load_league_game_context(),
-    )
-    for key, value in cat6.items():
-        # CALC_46 needs a betting line nobody publishes to this repo.
-        results[key] = (value, key != "CALC_46")
-
-    # Category 8 and 9
-    batter_form = src08.fetch_batter_form(batter_id, season)
-    for key, value in compute_category_08(batter_form, today).items():
-        results[key] = (value, True)
-    pitcher_form = src09.fetch_pitcher_form(pitcher_id, season) if pitcher_id else []
-    for key, value in compute_category_09(pitcher_form, today).items():
-        results[key] = (value, bool(pitcher_id))
-
-    # Category 10
-    cat10 = compute_category_10(
-        game={
-            "game_pk": game["gamePk"],
-            "game_date": today.isoformat(),
-            "game_number": game.get("gameNumber", 1),
-            "day_night": "day" if game["start_dt"].hour < 22 else "night",
-            "venue_id": environment.get("venue_id"),
-            "start_time": game["start_dt"],
-        },
-        game_log=src10.fetch_team_game_log(hitter["team_id"], today),
-        ballparks=baselines.load_ballparks(),
-        bvp=bvp,
-    )
-    for key, value in cat10.items():
-        results[key] = (value, key not in ("CALC_66", "CALC_67", "CALC_68"))
-
-    # Category 11
-    cat11 = compute_category_11(
-        pitches=batter_form,
-        bvp=results.get("CALC_01", (None, True))[0],
-        platoon=results.get("CALC_09", (None, True))[0],
-        pitch_type=results.get("CALC_20", (None, True))[0],
-        lineup_spot_pa=results.get("CALC_41", (None, True))[0],
-        ninth_inning_risk=results.get("CALC_45", (None, True))[0],
+        is_home=hitter["is_home"],
+        game_number=hitter["game"].get("gameNumber", 1),
+        start_time=hitter["game"]["start_dt"],
+        season=season,
         today=today,
     )
-    for key, value in cat11.items():
-        results[key] = (value, True)
-
-    return results
+    return {key: (value, key not in STRUCTURAL_NONE) for key, value in results.items()}
 
 
 def main() -> None:

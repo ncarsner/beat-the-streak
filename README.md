@@ -949,6 +949,91 @@ records.
 **The ranked table still comes from `binomial_probability`.** Switching it to `CALC_76` is
 a one-line change and a deliberate decision with no validation behind it yet, which is #35.
 
+### The Model column
+
+The table carries a `Model` column beside `Prob %`. They are two different answers to the
+same question, and showing both is the point.
+
+- **`Prob %`** is the shipped heuristic: a five-game batting average put through the
+  binomial with a `pa / 5` exponent.
+- **`Model`** pools **27 calculators**, every shipped key reporting hits per plate
+  appearance, weighted by sample size, then puts the result through `CALC_76` with the
+  Category 6 plate-appearance projection.
+
+**The ranking is still `Prob %`.** Neither number has been validated against outcomes
+(#35), so `Model` is reported beside the heuristic rather than replacing it.
+
+```
++-----------------+------+------+------+--------+-------+
+|      Player     | Team | H-AB | BB/K | Prob % | Model |
++-----------------+------+------+------+--------+-------+
+|   Bryce Harper  | PHI  | 5-17 | 8/4  | 82.5%  | 64.5% |
+|   Jake Mangum   | PIT  | 6-19 | 2/4  | 79.7%  | 73.0% |
+|  Ernie Clement  | TOR  | 6-23 | 0/5  | 75.1%  | 67.3% |
+| Freddie Freeman | LAD  | 3-18 | 1/1  | 50.0%  | 72.5% |
+| Randy Arozarena | SEA  | 3-19 | 1/3  | 49.7%  | 64.4% |
+|   Ketel Marte   | ARI  | 2-17 | 4/5  | 40.9%  | 62.4% |
++-----------------+------+------+------+--------+-------+
+```
+
+**They reorder, not just differ.** On that real slate Freeman is fourth on the heuristic and
+second on the model; Harper is first and fifth. The heuristic spans 41.6 points and the
+model 10.6, which is what a 17-plate-appearance sample versus a several-thousand one should
+look like. A dash means the model did not resolve, which is a different statement from a low
+probability.
+
+Membership in the aggregate is an **explicit list**, not a filter on the `PROBABILITY` role
+tag, because the tag does not mean what its name suggests. Category 1 tags a hard-hit rate
+and a whiff rate `PROBABILITY` "for uniformity", and `CALC_06`'s xwOBA runs to roughly 2.0.
+Every rejection is recorded in `calculators/category_11_composite.py` with its reason. The
+subtle group is `CALC_16`/`17`/`18`/`30`: they look like batting averages and sit in a
+plausible .27 to .39 range, but their denominator is **batted balls** rather than plate
+appearances, so pooling them raises the aggregate by roughly the contact rate. `CALC_14` is
+excluded for a different reason, correctness, per #37.
+
+Two properties of the aggregate are documented rather than fixed, because fixing them needs
+a backtest to score the options:
+
+- **It over-weights the season baseline.** `CALC_09`, `CALC_11`, `CALC_37`, `CALC_38`, the
+  `CALC_44` buckets and `CALC_72` are largely the same season data sliced differently, and
+  precision weighting treats them as independent evidence. 13 of the 27 members are in that
+  family. Tracked as #51.
+- **It pools hits-per-PA with hits-allowed-per-PA.** A .270 hitter facing a .190-allowed
+  starter lands between the two, which is roughly what a matchup estimate should do. That
+  is a modelling choice, not an identity.
+
+**Cost.** `--model` / `--no-model` defaults to **on for a manual run and off with
+`--scheduled`**. A hitter whose Statcast frame is already cached for today evaluates in
+about 1.9 seconds; one who is not costs roughly 78 seconds, and a full slate is 50 hitters
+plus up to 30 starters. That does not fit a 15-minute cron. #50 tracks making it affordable
+there.
+
+`calculators/pipeline.py` is the single place that turns a hitter-game into all 108
+calculator keys. `main.py` and `scripts/evaluate_sample_coverage.py` both use it, so a
+coverage measurement is taken against the same assembly that ships.
+
+### Measuring coverage
+
+`scripts/evaluate_sample_coverage.py` runs every calculator against a day's posted lineups
+for the `ROADMAP.md` sample batters and reports how many keys resolve.
+
+```bash
+PYTHONPATH=. python3 scripts/evaluate_sample_coverage.py --date 2026-08-09
+```
+
+On the 2026-08-09 slate, 10 of the 13 sample batters were posted, and of 1,080 keys
+evaluated: **90.4% usable**, 5.9% empty sample, 3.7% structural, **0% missing input**.
+Excluding the four known-blocked calculators, 93.8%.
+
+Every `None` is classified, and the three buckets are not the same finding. *Structural*
+means no reachable source exists. *Empty* means the input arrived with nothing in it, which
+is real coverage information. *Missing* means the harness did not supply the argument, which
+is a defect in the script. That last bucket earned its keep three times while the script was
+being written, each of which would otherwise have been reported as an empty sample.
+
+**This measures coverage, not quality.** A calculator that resolves for every hitter may
+carry no predictive signal at all.
+
 ### Output format
 
 ```

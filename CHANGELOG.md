@@ -5,6 +5,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-09 (Model column)
+
+### Added
+- **`Model` column in the ranked table**, beside `Prob %`. Pools 27 calculators, every
+  shipped key reporting hits per plate appearance, weighted by sample size, through
+  `CALC_76` with the Category 6 plate-appearance projection.
+- `calculators/pipeline.py`, the single place that turns a hitter-game into all 108
+  calculator keys. `main.py` and the coverage script both use it.
+- `calculators.category_11_composite.aggregate_hit_rate` and `P_HIT_SCALE_KEYS`.
+- `--model` / `--no-model`, defaulting to **on for a manual run and off with
+  `--scheduled`**.
+- `scripts/evaluate_sample_coverage.py`, measuring how many calculator values resolve for
+  the `ROADMAP.md` sample batters against a day's posted lineups.
+
+### Notes
+- **Coverage on the 2026-08-09 slate: 90.4% of 1,080 keys usable** across the 10 sample
+  batters who were posted (93.8% excluding the four structurally blocked calculators).
+  5.9% empty sample, 0% missing input.
+- **The ranking is unchanged and still `Prob %`.** Neither number has been validated
+  against outcomes (#35).
+- **The two columns reorder, not just differ.** On the 2026-08-09 slate Freeman is fourth
+  on the heuristic and second on the model, Harper first and fifth. The heuristic spans
+  41.6 points and the model 10.6, which is what a 17-plate-appearance sample versus a
+  several-thousand one should look like.
+- **Membership is an explicit list, not a filter on the `PROBABILITY` role tag.** The tag
+  does not mean what its name suggests: `CALC_04`, `CALC_05`, `CALC_07`, `CALC_08` and
+  `CALC_06_XWOBA` all carry it and none is a hit rate. The subtle rejections are
+  `CALC_16`/`17`/`18`/`30`, which look like batting averages but are per batted ball, so
+  pooling them raises the aggregate by roughly the contact rate. `CALC_14` is excluded on
+  correctness instead, per #37.
+- Two known defects documented rather than fixed, because scoring the options needs #35:
+  the aggregate over-weights the season baseline (#51), and it pools hits-per-PA with
+  hits-allowed-per-PA, which is a modelling choice.
+- The worst-covered sample hitter, at 85 of 108, was the one facing an opener: the opposing
+  starter's Category 9 keys all return `None`, which is independent support for the
+  `--exclude-openers` default.
+
+### Fixed
+- Three harness defects caught by the missing-input bucket while building the coverage
+  script, each of which also affected the shared pipeline: `fetch_handedness` returns
+  `bats`/`throws` rather than `bat_side`/`pitch_hand`; `fetch_game_environment` must be
+  merged **under** the schedule half, not over it; and `arm_angle` is projected by
+  Category 2, not Category 3.
+
+---
+
 ## 2026-08-09 (Category 11 and the opener gate)
 
 ### Added
