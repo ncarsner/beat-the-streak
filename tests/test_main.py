@@ -1,3 +1,4 @@
+import json
 import pytest
 import requests
 from datetime import datetime, timedelta
@@ -710,6 +711,55 @@ def test_save_and_load_queried_games_cache_roundtrip(tmp_path):
         "700002": {"date": "2026-07-20", "players": []},
     }
     save_queried_games_cache(cache, cache_file)
+    assert load_queried_games_cache(cache_file) == cache
+
+
+def test_queried_games_cache_roundtrips_what_process_game_lineup_writes(
+    monkeypatch, tmp_path
+):
+    """Round-trip the producer's real payload, not a hand-built stand-in.
+
+    The test above invents `{"id": 1, "fullName": "A", "team_id": 119}`, a shape
+    `process_game_lineup` has never written. That is why it stayed green while
+    every real run crashed: the real payload carries `start_dt`, a `datetime`,
+    which `json.dump` cannot serialize. Driving the producer keeps this test
+    honest the next time a field is added to the context.
+    """
+    home = [{"id": 111, "fullName": "Player 111", "team_id": 119}]
+    monkeypatch.setattr(main, "fetch_lineup", lambda pk: {"home": home, "away": []})
+
+    cache, schedule_map, all_players = {}, {}, []
+    process_game_lineup(
+        _make_schedule_game(), cache, "2026-07-20", schedule_map, all_players
+    )
+
+    cache_file = tmp_path / "queried_games_cache.json"
+    save_queried_games_cache(cache, cache_file)
+    restored = load_queried_games_cache(cache_file)
+
+    assert restored == cache
+    start = restored["700001"]["players"][0]["start_dt"]
+    assert isinstance(start, datetime)
+    # Naive would not fail here, it would silently move CALC_70's answer.
+    assert start.tzinfo is not None
+    assert start.utcoffset() == timedelta(0)
+
+
+def test_load_queried_games_cache_unparseable_start_dt_returns_empty_dict(tmp_path):
+    cache_file = tmp_path / "queried_games_cache.json"
+    cache_file.write_text(
+        json.dumps(
+            {"700001": {"date": "2026-07-20", "players": [{"start_dt": "not-a-time"}]}}
+        )
+    )
+    assert load_queried_games_cache(cache_file) == {}
+
+
+def test_load_queried_games_cache_tolerates_players_predating_start_dt(tmp_path):
+    """A record written before the model fields existed must still load."""
+    cache_file = tmp_path / "queried_games_cache.json"
+    cache = {"700001": {"date": "2026-07-20", "players": [{"id": 1, "team_id": 119}]}}
+    cache_file.write_text(json.dumps(cache))
     assert load_queried_games_cache(cache_file) == cache
 
 

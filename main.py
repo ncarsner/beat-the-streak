@@ -56,19 +56,49 @@ def save_no_data_cache(cache, path=NO_DATA_CACHE_FILE):
         json.dump(cache, f, indent=2, sort_keys=True)
 
 
+def _json_encode_datetime(value):
+    """Serialize a datetime as an ISO 8601 string for `json.dump`'s *default*.
+
+    Cached player records carry `start_dt`, which the model needs as a real
+    `datetime` (CALC_70 resolves each venue's IANA zone at that instant), so the
+    cache is the only place the type has to flatten. Anything else unserializable
+    still raises, which is the behaviour we want: silently stringifying an
+    unexpected object would put a value in the cache that `load` cannot restore.
+    """
+    if isinstance(value, datetime):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def load_queried_games_cache(path=QUERIED_GAMES_CACHE_FILE):
-    """Return the {gamePk_str: {"date": ..., "players": [...]}} cache from a prior run, or {} if absent/corrupt."""
+    """Return the {gamePk_str: {"date": ..., "players": [...]}} cache from a prior run, or {} if absent/corrupt.
+
+    `start_dt` is restored to an aware `datetime`, inverting the ISO encoding
+    `save_queried_games_cache` applies. The round trip has to preserve tzinfo:
+    `main.fetch_schedule` builds the value aware, and a naive one silently moves
+    CALC_70's timezone-shift answer instead of failing.
+
+    A player record written before `start_dt` existed simply has no such key and
+    is left alone. An unparseable timestamp invalidates the whole cache, which
+    costs one lineup re-fetch and is preferable to handing the model a field it
+    cannot use.
+    """
     try:
         with open(path) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
+            cache = json.load(f)
+        for entry in cache.values():
+            for player in entry.get("players", []):
+                if player.get("start_dt") is not None:
+                    player["start_dt"] = datetime.fromisoformat(player["start_dt"])
+        return cache
+    except (OSError, json.JSONDecodeError, ValueError, AttributeError):
         return {}
 
 
 def save_queried_games_cache(cache, path=QUERIED_GAMES_CACHE_FILE):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
-        json.dump(cache, f, indent=2, sort_keys=True)
+        json.dump(cache, f, indent=2, sort_keys=True, default=_json_encode_datetime)
 
 
 def load_sms_sent_cache(path=SMS_SENT_CACHE_FILE):
