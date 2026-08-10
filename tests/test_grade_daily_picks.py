@@ -244,10 +244,10 @@ def test_top1_follows_each_methods_own_ranking(capsys):
     ]
     g.summarize(days, top_n=1)
     lines = capsys.readouterr().out.splitlines()
-    heuristic = next(ln for ln in lines if ln.startswith("heuristic"))
-    model = next(ln for ln in lines if ln.startswith("model"))
-    assert "0.0%" in heuristic
-    assert "100.0%" in model
+    heuristic = next(ln for ln in lines if "heuristic" in ln)
+    model = next(ln for ln in lines if "| model" in ln)
+    assert "0/1 (0%)" in heuristic
+    assert "1/1 (100%)" in model
 
 
 def test_a_pick_with_no_model_value_is_skipped_by_the_model_only(capsys):
@@ -262,7 +262,75 @@ def test_a_pick_with_no_model_value_is_skipped_by_the_model_only(capsys):
     ]
     g.summarize(days, top_n=5)
     out = capsys.readouterr().out
-    heuristic = next(ln for ln in out.splitlines() if ln.startswith("heuristic"))
-    model = next(ln for ln in out.splitlines() if ln.startswith("model"))
-    assert heuristic.split()[-1] == "2"
-    assert model.split()[-1] == "1"
+    heuristic = next(ln for ln in out.splitlines() if "heuristic" in ln)
+    model = next(ln for ln in out.splitlines() if "| model" in ln)
+    # Last cell is the scored count: the heuristic saw both picks, the model one.
+    assert heuristic.split("|")[-2].strip() == "2"
+    assert model.split("|")[-2].strip() == "1"
+
+
+# ---- rendering ----
+
+
+def test_render_day_shows_each_methods_own_top_picks(capsys):
+    day = {
+        "date": "2026-08-10",
+        "graded": [
+            {
+                **_pick(1, heuristic=0.9, model=0.5),
+                "player": "Heur Fav",
+                "got_hit": False,
+            },
+            {
+                **_pick(2, heuristic=0.2, model=0.9),
+                "player": "Model Fav",
+                "got_hit": True,
+            },
+        ],
+    }
+    out = g.render_day(day, top_n=1)
+    assert "Heur Fav" in out
+    assert "Model Fav" in out
+    assert "HIT" in out
+    assert "no hit" in out
+
+
+def test_render_day_counts_hits_in_the_title():
+    day = {
+        "date": "2026-08-10",
+        "graded": [
+            {**_pick(1, heuristic=0.9), "got_hit": True},
+            {**_pick(2, heuristic=0.8), "got_hit": True},
+            {**_pick(3, heuristic=0.7), "got_hit": False},
+        ],
+    }
+    assert "2/3 hit" in g.render_day(day, top_n=3)
+
+
+def test_render_day_omits_a_method_with_no_values():
+    day = {
+        "date": "2026-08-10",
+        "graded": [{**_pick(1, model=None), "got_hit": True}],
+    }
+    out = g.render_day(day, top_n=5)
+    assert "by Prob %" in out
+    assert "by Model" not in out
+
+
+def test_summary_reports_counts_alongside_percentages(capsys):
+    """A percentage without its denominator is misleading early on: 100% off one
+    pick reads the same as 100% off fifty."""
+    days = [
+        {"date": "2026-08-10", "graded": [{**_pick(1), "got_hit": True}]},
+    ]
+    g.summarize(days, top_n=1)
+    assert "1/1 (100%)" in capsys.readouterr().out
+
+
+def test_top_n_of_one_does_not_crash_the_summary(capsys):
+    """PrettyTable rejects duplicate field names, so `top-1` twice is fatal."""
+    days = [{"date": "2026-08-10", "graded": [{**_pick(1), "got_hit": True}]}]
+    g.summarize(days, top_n=1)
+    out = capsys.readouterr().out
+    assert "top-1" in out
+    assert "heuristic" in out

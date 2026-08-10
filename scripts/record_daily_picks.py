@@ -42,6 +42,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from prettytable import PrettyTable
+
 import main
 
 PICKS_DIR = Path(__file__).resolve().parent.parent / "data" / "picks"
@@ -133,6 +135,54 @@ def snapshot_path(date_str: str) -> Path:
     return PICKS_DIR / f"{date_str}.json"
 
 
+def render_snapshot(snapshot: dict, top_n: int = 10) -> str:
+    """Return the snapshot as a table.
+
+    The JSON on disk is the durable record the grader reads; this is what a
+    person reads. Both methods' rankings are shown side by side rather than one
+    combined ordering, because the two disagree about who the best pick is and
+    a single ordering would have to pick a winner before anything is validated.
+    """
+    picks = snapshot["picks"]
+    lines = [
+        f"Picks recorded for {snapshot['date']} "
+        f"({snapshot['games_upcoming']} upcoming games, {len(picks)} hitters)"
+    ]
+    if snapshot.get("openers_excluded"):
+        lines.append(f"{snapshot['openers_excluded']} opener matchup(s) excluded")
+
+    def section(title: str, key: str) -> None:
+        ranked = [p for p in picks if p.get(key) is not None]
+        if not ranked:
+            lines.append(f"\n{title}: no values")
+            return
+        ranked.sort(key=lambda p: p[key], reverse=True)
+        table = PrettyTable()
+        table.title = title
+        table.field_names = ["#", "Player", "Tm", "H-AB", "BB/K", "Prob %", "Model"]
+        table.align["Player"] = "l"
+        for i, p in enumerate(ranked[:top_n], 1):
+            model = p.get("prob_model")
+            table.add_row(
+                [
+                    i,
+                    p["player"],
+                    p["team"],
+                    f"{p['hits_last5']}-{p['at_bats_last5']}",
+                    f"{p['walks_last5']}/{p['strikeouts_last5']}",
+                    f"{p['prob_heuristic']:.1%}",
+                    f"{model:.1%}" if model is not None else "-",
+                ]
+            )
+        lines.append(str(table))
+
+    section(
+        f"Top {top_n} by Prob % (heuristic, what the tool ranks on)", "prob_heuristic"
+    )
+    section(f"Top {top_n} by Model (unvalidated, #35)", "prob_model")
+    return "\n".join(lines)
+
+
 def main_cli() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--date", default=None, help="YYYY-MM-DD, defaults to today")
@@ -140,6 +190,14 @@ def main_cli() -> None:
         "--force",
         action="store_true",
         help="overwrite an existing snapshot even if it covers more games",
+    )
+    parser.add_argument(
+        "--top-n", type=int, default=10, help="rows per table, defaults to 10"
+    )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="render an existing snapshot as a table without re-evaluating the slate",
     )
     args = parser.parse_args()
 
@@ -153,6 +211,15 @@ def main_cli() -> None:
             existing = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
             existing = None
+
+    # Renders what is already on disk. Has to return before `build_snapshot`,
+    # which re-evaluates the whole slate and costs minutes.
+    if args.show:
+        if existing is None:
+            print(f"No readable snapshot at {path}.")
+            return
+        print(render_snapshot(existing, top_n=args.top_n))
+        return
 
     snapshot = build_snapshot(date_str, now)
 
@@ -171,10 +238,11 @@ def main_cli() -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(snapshot, indent=2, sort_keys=True))
 
+    print(render_snapshot(snapshot, top_n=args.top_n))
     modelled = sum(1 for p in snapshot["picks"] if p["prob_model"] is not None)
     print(
-        f"Wrote {path} - {len(snapshot['picks'])} hitters, "
-        f"{modelled} with a model value, {snapshot['games_upcoming']} upcoming games"
+        f"\nWrote {path}\n"
+        f"{len(snapshot['picks'])} hitters, {modelled} with a model value"
     )
 
 

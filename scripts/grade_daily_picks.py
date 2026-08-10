@@ -44,6 +44,7 @@ import math
 from pathlib import Path
 
 import requests
+from prettytable import PrettyTable
 
 from mlb_api import MLB_API_BASE
 
@@ -169,6 +170,43 @@ def grade_snapshot(snapshot: dict) -> dict | None:
     return {"date": snapshot["date"], "graded": graded}
 
 
+def render_day(day: dict, top_n: int) -> str:
+    """Return one day's graded picks as a table, each method's own top *top_n*.
+
+    This is the row-level view behind the summary: it shows which hitter each
+    method actually picked and whether he delivered, which is the thing a
+    person can sanity-check. The summary alone cannot show a day where both
+    methods were right for different reasons.
+    """
+    lines = []
+    for label, key in (("Prob %", "prob_heuristic"), ("Model", "prob_model")):
+        ranked = [p for p in day["graded"] if p.get(key) is not None]
+        if not ranked:
+            continue
+        ranked.sort(key=lambda p: p[key], reverse=True)
+        table = PrettyTable()
+        hits = sum(1 for p in ranked[:top_n] if p["got_hit"])
+        table.title = (
+            f"{day['date']}: top {top_n} by {label} ({hits}/{len(ranked[:top_n])} hit)"
+        )
+        table.field_names = ["#", "Player", "Tm", "Prob %", "Model", "Result"]
+        table.align["Player"] = "l"
+        for i, p in enumerate(ranked[:top_n], 1):
+            model = p.get("prob_model")
+            table.add_row(
+                [
+                    i,
+                    p["player"],
+                    p["team"],
+                    f"{p['prob_heuristic']:.1%}",
+                    f"{model:.1%}" if model is not None else "-",
+                    "HIT" if p["got_hit"] else "no hit",
+                ]
+            )
+        lines.append(str(table))
+    return "\n".join(lines)
+
+
 def summarize(days: list[dict], top_n: int) -> None:
     """Print the comparison. Every number here is descriptive, not a verdict."""
     methods = {"heuristic": "prob_heuristic", "model": "prob_model"}
@@ -180,11 +218,18 @@ def summarize(days: list[dict], top_n: int) -> None:
     if base:
         print(f"Base rate (any graded hitter gets a hit): {sum(base) / len(base):.1%}")
 
-    print(
-        f"\n{'method':<12} {'top-1':<9} {f'top-{top_n}':<9} "
-        f"{'Brier':<9} {'log loss':<9} {'scored':<7}"
+    table = PrettyTable()
+    table.title = "Heuristic vs model, on realized outcomes"
+    # `--top-n 1` makes the two hit-rate columns the same name, and PrettyTable
+    # rejects duplicate field names outright, so the whole summary crashes.
+    # Collapse to a single column when they would coincide.
+    show_topn = top_n != 1
+    table.field_names = (
+        ["Method", "top-1", f"top-{top_n}", "Brier", "log loss", "scored"]
+        if show_topn
+        else ["Method", "top-1", "Brier", "log loss", "scored"]
     )
-    print("-" * 60)
+    table.align["Method"] = "l"
 
     for label, key in methods.items():
         top1_hits = top1_n = 0
@@ -207,12 +252,22 @@ def summarize(days: list[dict], top_n: int) -> None:
                 briers.append(_brier(pick[key], pick["got_hit"]))
                 losses.append(_log_loss(pick[key], pick["got_hit"]))
 
-        top1 = f"{top1_hits / top1_n:.1%}" if top1_n else "-"
-        topn = f"{topn_hits / topn_n:.1%}" if topn_n else "-"
-        brier = f"{sum(briers) / len(briers):.4f}" if briers else "-"
-        loss = f"{sum(losses) / len(losses):.4f}" if losses else "-"
-        print(f"{label:<12} {top1:<9} {topn:<9} {brier:<9} {loss:<9} {len(briers):<7}")
+        row = [
+            label,
+            f"{top1_hits}/{top1_n} ({top1_hits / top1_n:.0%})" if top1_n else "-",
+        ]
+        if show_topn:
+            row.append(
+                f"{topn_hits}/{topn_n} ({topn_hits / topn_n:.0%})" if topn_n else "-"
+            )
+        row += [
+            f"{sum(briers) / len(briers):.4f}" if briers else "-",
+            f"{sum(losses) / len(losses):.4f}" if losses else "-",
+            len(briers),
+        ]
+        table.add_row(row)
 
+    print(table)
     print(
         "\nLower Brier and log loss are better; higher hit rates are better."
         "\nThe tool ranks, so the hit rates are the primary measure."
@@ -229,6 +284,11 @@ def main_cli() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--date", default=None, help="grade only this YYYY-MM-DD")
     parser.add_argument("--top-n", type=int, default=5)
+    parser.add_argument(
+        "--detail",
+        action="store_true",
+        help="also show each graded day's picks and results row by row",
+    )
     args = parser.parse_args()
 
     if not PICKS_DIR.exists():
@@ -256,6 +316,11 @@ def main_cli() -> None:
     if not days:
         print("\nNothing gradeable yet.")
         return
+
+    if args.detail:
+        for day in days:
+            print()
+            print(render_day(day, args.top_n))
     summarize(days, args.top_n)
 
 
