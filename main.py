@@ -8,6 +8,13 @@ from prettytable import PrettyTable
 from time import sleep
 import random
 
+from calculators.category_07_bullpen_exposure import (
+    OPENER_MAX_BF_PER_START,
+    RELIEF_BF_SHARE_MIN,
+    relief_share,
+    start_lines,
+)
+from calculators.sources.category_07_bullpen_exposure import fetch_pitching_game_logs
 from mlb_api import MLB_API_BASE
 from teams import TEAM_ID_TO_ABBR
 
@@ -218,6 +225,77 @@ def select_games(
         window = timedelta(hours=2)
         return [g for g in games if timedelta(0) < g["start_dt"] - now <= window]
     return [g for g in games if g["start_dt"] >= now]
+
+
+def is_opener(games: list[dict]) -> bool:
+    """Whether a pitcher's game log profiles him as an opener, not a starter.
+
+    *games* is his season game log from
+    `calculators.sources.category_07_bullpen_exposure.fetch_pitching_game_logs`.
+
+    Two ways to qualify, and the second is why this is not simply `CALC_51`:
+
+    1. He has started, and his starts have averaged no more than
+       `OPENER_MAX_BF_PER_START` batters faced. This is `CALC_51`'s rule.
+    2. He has **never** started and is a reliever by workload. `CALC_51` returns
+       None here, correctly: with no starts there is no start length to measure,
+       so as a *measurement* the answer is "no evidence". But as a *decision*,
+       a reliever announced as today's starter is the clearest opener there is,
+       and the highest-probability case of the thing this gate exists to catch.
+       Keeping the two rules separate is deliberate. The calculator answers what
+       was measured; the gate answers what to do.
+
+    An empty log returns False, so a pitcher with no season history is treated as
+    a conventional starter and his game is kept. That matches the flag's
+    include-when-unknown policy; see `build_arg_parser`.
+    """
+    if not games:
+        return False
+
+    starts = start_lines({"games": games})
+    if starts:
+        faced = sum(g.get("batters_faced") or 0 for g in starts)
+        return faced / len(starts) <= OPENER_MAX_BF_PER_START
+
+    share = relief_share({"games": games})
+    return share is not None and share >= RELIEF_BF_SHARE_MIN
+
+
+def opener_pitcher_ids(games: list[dict], season: int | None = None) -> set[int]:
+    """Ids of the announced starters on *games* who profile as openers.
+
+    One batched request covering every probable pitcher on the slate, whatever
+    the slate size. An unannounced starter contributes no id and so is never
+    excluded.
+    """
+    ids = {
+        pid
+        for g in games
+        for pid in (g.get("home_pitcher_id"), g.get("away_pitcher_id"))
+        if pid is not None
+    }
+    if not ids:
+        return set()
+    logs = fetch_pitching_game_logs(ids, season or datetime.today().year)
+    return {pid for pid in ids if is_opener(logs.get(pid, []))}
+
+
+def drop_opener_matchups(players: list[dict], opener_ids: set[int]) -> list[dict]:
+    """Remove hitters whose opposing starter is an opener.
+
+    **Per side, not per game.** A club using an opener does not stop the other
+    club from starting a conventional pitcher, so dropping the whole game would
+    discard nine hitters who are facing exactly what this tool is about. The
+    filter keys on each player's `opposing_pitcher_id`, which is resolved per
+    side in `process_game_lineup`.
+
+    A hitter whose opposing starter is unannounced is **kept**: dropping a
+    playable matchup over a missing field is the worse failure, and the field was
+    populated on 60 of 60 sides across the two slates probed on 2026-08-09.
+    """
+    if not opener_ids:
+        return players
+    return [p for p in players if p.get("opposing_pitcher_id") not in opener_ids]
 
 
 def is_in_cooldown(player_id, cache, cooldown_days):
@@ -568,6 +646,21 @@ def run(args: argparse.Namespace) -> None:
     for g in selected:
         process_game_lineup(g, queried_games_cache, today, schedule_map, all_players)
 
+    # Filtered here, after the loop, and never inside the queried-games cache.
+    # The probable pitcher publishes on a later clock than the lineup and changes
+    # on a scratch, so `process_game_lineup` re-resolves it from the fresh
+    # schedule record on the cache-hit path. Reading it at this point inherits
+    # that: a game dropped at 14:00 for an announced opener comes back at 14:15
+    # if he is scratched. Baking the decision into a cache entry would rebuild
+    # the exact bug `refresh_opposing_pitchers` exists to prevent.
+    if args.exclude_openers:
+        openers = opener_pitcher_ids(selected)
+        kept = drop_opener_matchups(all_players, openers)
+        dropped = len(all_players) - len(kept)
+        if dropped:
+            print(f"Excluded {dropped} hitters facing {len(openers)} opener(s)")
+        all_players = kept
+
     no_data_cache = load_no_data_cache()
     summary = compile_player_data(
         players=all_players,
@@ -604,6 +697,20 @@ def build_arg_parser():
         type=int,
         default=DEFAULT_COOLDOWN_DAYS,
         help=f"Days to skip a player after a no-data poll before rechecking (default: {DEFAULT_COOLDOWN_DAYS})",
+    )
+    parser.add_argument(
+        "--exclude-openers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Drop hitters whose opposing starter profiles as an opener rather "
+            "than a conventional starting pitcher (default: enabled). This tool "
+            "ranks hitters against traditional starters, so an opener's start "
+            "is a different matchup than the one being modelled. Filtering is "
+            "per side, so the other club's hitters are unaffected. A hitter "
+            "whose opposing starter has not been announced is kept. Pass "
+            "--no-exclude-openers to rank every posted hitter."
+        ),
     )
     return parser
 

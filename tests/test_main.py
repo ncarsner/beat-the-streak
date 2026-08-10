@@ -30,6 +30,9 @@ from main import (
     send_sms_notification,
     dispatch_scheduled_sms,
     build_arg_parser,
+    is_opener,
+    opener_pitcher_ids,
+    drop_opener_matchups,
     probable_pitcher_id,
     refresh_opposing_pitchers,
     DEFAULT_COOLDOWN_DAYS,
@@ -1188,10 +1191,16 @@ def test_dispatch_all_credentials_set_proceeds_to_send(monkeypatch):
 # ---- run: scheduled gate ----
 
 
-def _fake_args(scheduled=False, cooldown_days=DEFAULT_COOLDOWN_DAYS):
+def _fake_args(
+    scheduled=False, cooldown_days=DEFAULT_COOLDOWN_DAYS, exclude_openers=False
+):
     import argparse
 
-    return argparse.Namespace(scheduled=scheduled, cooldown_days=cooldown_days)
+    return argparse.Namespace(
+        scheduled=scheduled,
+        cooldown_days=cooldown_days,
+        exclude_openers=exclude_openers,
+    )
 
 
 def _patch_run_io(monkeypatch, summary_data):
@@ -1484,3 +1493,114 @@ def test_binomial_probability_still_uses_the_pa_over_five_exponent():
     assert "pa / 5" in source
     # And the value itself: 20 AB, 6 H, 5 BB -> pa=25, exp=5, avg=.3
     assert binomial_probability(20, 6, 5) == pytest.approx(1 - (1 - 0.3) ** 5)
+
+
+# ---- opener exclusion ----
+
+
+def _log(bf=4, pitches=15, started=False, game_date="2026-08-08"):
+    from tests.conftest import _relief_line
+
+    return _relief_line(game_date=game_date, bf=bf, pitches=pitches, started=started)
+
+
+def test_a_conventional_starter_is_not_an_opener():
+    assert is_opener([_log(bf=24, started=True) for _ in range(5)]) is False
+
+
+def test_a_short_average_start_is_an_opener():
+    assert is_opener([_log(bf=5, started=True) for _ in range(4)]) is True
+
+
+def test_a_reliever_making_his_first_start_is_an_opener():
+    """CALC_51 returns None here because there is no start length to measure.
+    As a measurement that is correct; as a decision it is the clearest opener
+    there is, which is why the gate carries its own rule."""
+    assert is_opener([_log(bf=4) for _ in range(40)]) is True
+
+
+def test_a_starter_between_assignments_is_not_an_opener():
+    """Mostly starting work and no short starts. The relief rule must not fire
+    on a rotation arm who has taken a piggyback outing."""
+    games = [_log(bf=24, started=True) for _ in range(10)] + [_log(bf=6)]
+    assert is_opener(games) is False
+
+
+def test_an_unknown_pitcher_is_treated_as_a_conventional_starter():
+    """Include-when-unknown. Dropping a playable matchup over a missing history
+    is the worse failure."""
+    assert is_opener([]) is False
+
+
+def test_openers_are_resolved_in_one_request(monkeypatch):
+    calls = []
+
+    def fake_logs(ids, season):
+        calls.append(sorted(ids))
+        return {pid: [_log(bf=5, started=True)] for pid in ids}
+
+    monkeypatch.setattr(main, "fetch_pitching_game_logs", fake_logs)
+    games = [
+        {"home_pitcher_id": 1, "away_pitcher_id": 2},
+        {"home_pitcher_id": 3, "away_pitcher_id": 4},
+    ]
+    assert opener_pitcher_ids(games, 2026) == {1, 2, 3, 4}
+    assert calls == [[1, 2, 3, 4]]
+
+
+def test_an_unannounced_starter_contributes_no_id(monkeypatch):
+    monkeypatch.setattr(
+        main, "fetch_pitching_game_logs", lambda ids, season: {i: [] for i in ids}
+    )
+    games = [{"home_pitcher_id": None, "away_pitcher_id": 7}]
+    assert opener_pitcher_ids(games, 2026) == set()
+
+
+def test_a_slate_with_no_announced_starters_makes_no_request(monkeypatch):
+    def boom(*args, **kwargs):
+        raise AssertionError("should not have been called")
+
+    monkeypatch.setattr(main, "fetch_pitching_game_logs", boom)
+    assert opener_pitcher_ids([{"home_pitcher_id": None}], 2026) == set()
+
+
+def test_only_the_side_facing_the_opener_is_dropped():
+    """A club using an opener does not stop the other club from starting a
+    conventional pitcher, so dropping the whole game would discard nine hitters
+    facing exactly what this tool ranks."""
+    players = [
+        {"fullName": "Faces opener", "opposing_pitcher_id": 1},
+        {"fullName": "Faces starter", "opposing_pitcher_id": 2},
+    ]
+    kept = drop_opener_matchups(players, {1})
+    assert [p["fullName"] for p in kept] == ["Faces starter"]
+
+
+def test_a_hitter_with_an_unannounced_opposing_starter_is_kept():
+    players = [{"fullName": "Unknown matchup", "opposing_pitcher_id": None}]
+    assert drop_opener_matchups(players, {1}) == players
+
+
+def test_no_openers_leaves_the_pool_untouched():
+    players = [{"opposing_pitcher_id": 1}]
+    assert drop_opener_matchups(players, set()) is players
+
+
+def test_the_flag_defaults_to_excluding_openers():
+    assert build_arg_parser().parse_args([]).exclude_openers is True
+
+
+def test_the_flag_can_be_turned_off():
+    assert (
+        build_arg_parser().parse_args(["--no-exclude-openers"]).exclude_openers is False
+    )
+
+
+def test_the_flag_can_be_stated_explicitly():
+    assert build_arg_parser().parse_args(["--exclude-openers"]).exclude_openers is True
+
+
+def test_the_flag_is_independent_of_scheduled_mode():
+    args = build_arg_parser().parse_args(["--scheduled", "--no-exclude-openers"])
+    assert args.scheduled is True
+    assert args.exclude_openers is False
