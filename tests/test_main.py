@@ -30,6 +30,11 @@ from main import (
     format_sms_body,
     send_sms_notification,
     dispatch_scheduled_sms,
+    format_email_body,
+    send_email_notification,
+    dispatch_scheduled_email,
+    load_email_sent_cache,
+    save_email_sent_cache,
     build_arg_parser,
     is_opener,
     opener_pitcher_ids,
@@ -1927,3 +1932,363 @@ def test_a_table_without_any_model_still_renders(capsys):
     keeps its probability order."""
     probable_hitters([_row("A", 0.9), _row("B", 0.5)], n=1)
     assert "Delta" in capsys.readouterr().out
+
+
+# ---- format_email_body ----
+
+
+def _email_entry(name, prob, team="TST", model=None, **overrides):
+    entry = {
+        "Player": name,
+        "Team": team,
+        "probability": prob,
+        "At Bats": 20,
+        "Hits": 6,
+        "Walks": 3,
+        "Strikeouts": 4,
+        "GameHourUTC": 19,
+    }
+    if model is not None:
+        entry["model"] = model
+    entry.update(overrides)
+    return entry
+
+
+def test_format_email_body_subject_carries_the_game_hour():
+    subject, _ = format_email_body([_email_entry("P1", 0.68)], game_hour_utc=19)
+    assert "19:00 UTC" in subject
+
+
+def test_format_email_body_zero_pads_hour():
+    subject, body = format_email_body([_email_entry("P1", 0.5)], game_hour_utc=9)
+    assert "09:00 UTC" in subject
+    assert "09:00 UTC" in body
+
+
+def test_format_email_body_includes_the_bb_k_column():
+    """The column the user asked to keep. Present in the header and per row."""
+    _, body = format_email_body([_email_entry("P1", 0.5)], game_hour_utc=19)
+    assert "BB/K" in body
+    assert "3/4" in body
+
+
+def test_format_email_body_carries_every_table_column():
+    _, body = format_email_body([_email_entry("P1", 0.5, model=0.62)], game_hour_utc=19)
+    for column in ("Player", "H-AB", "BB/K", "Prob %", "Model", "Delta"):
+        assert column in body
+    assert "6-20" in body  # H-AB
+    assert "50.0%" in body  # Prob %
+    assert "62.0%" in body  # Model
+    assert "+12.0" in body  # Delta, in points
+
+
+def test_format_email_body_numbers_rows_in_order():
+    ranked = [_email_entry("Alpha", 0.8), _email_entry("Beta", 0.7)]
+    _, body = format_email_body(ranked, game_hour_utc=19)
+    assert "1   Alpha" in body
+    assert "2   Beta" in body
+
+
+def test_format_email_body_renders_a_missing_model_without_raising():
+    _, body = format_email_body([_email_entry("P1", 0.5)], game_hour_utc=19)
+    assert "P1" in body
+
+
+# ---- send_email_notification ----
+
+
+_SMTP_ARGS = {
+    "smtp_host": "smtp.example.com",
+    "smtp_port": 587,
+    "username": "user@example.com",
+    "password": "pw",
+    "from_address": "user@example.com",
+    "to_address": "me@example.com",
+}
+
+
+class _FakeSMTP:
+    """Records the calls a successful send makes."""
+
+    instances: list["_FakeSMTP"] = []
+
+    def __init__(self, host, port, timeout=None):
+        self.host, self.port, self.timeout = host, port, timeout
+        self.started_tls = False
+        self.login_args = None
+        self.sent = []
+        _FakeSMTP.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def starttls(self):
+        self.started_tls = True
+
+    def login(self, username, password):
+        self.login_args = (username, password)
+
+    def send_message(self, message):
+        self.sent.append(message)
+
+
+@pytest.fixture
+def fake_smtp(monkeypatch):
+    _FakeSMTP.instances = []
+    monkeypatch.setattr(main.smtplib, "SMTP", _FakeSMTP)
+    return _FakeSMTP
+
+
+def test_send_email_notification_success(fake_smtp):
+    result = send_email_notification([_email_entry("P1", 0.7)], 19, **_SMTP_ARGS)
+    assert result is True
+    sent = fake_smtp.instances[0].sent[0]
+    assert sent["To"] == "me@example.com"
+    assert sent["From"] == "user@example.com"
+    assert "19:00 UTC" in sent["Subject"]
+
+
+def test_send_email_notification_uses_starttls_and_logs_in(fake_smtp):
+    send_email_notification([_email_entry("P1", 0.7)], 19, **_SMTP_ARGS)
+    instance = fake_smtp.instances[0]
+    assert instance.started_tls is True
+    assert instance.login_args == ("user@example.com", "pw")
+
+
+def test_send_email_notification_body_reaches_the_message(fake_smtp):
+    send_email_notification([_email_entry("P1", 0.7)], 19, **_SMTP_ARGS)
+    body = fake_smtp.instances[0].sent[0].get_content()
+    assert "BB/K" in body
+    assert "P1" in body
+
+
+def test_send_email_notification_smtp_error_returns_false(monkeypatch):
+    def boom(*a, **kw):
+        raise main.smtplib.SMTPException("nope")
+
+    monkeypatch.setattr(main.smtplib, "SMTP", boom)
+    assert send_email_notification([_email_entry("P1", 0.7)], 19, **_SMTP_ARGS) is False
+
+
+def test_send_email_notification_connection_error_returns_false(monkeypatch):
+    """An unreachable host raises OSError, not SMTPException."""
+
+    def boom(*a, **kw):
+        raise OSError("unreachable")
+
+    monkeypatch.setattr(main.smtplib, "SMTP", boom)
+    assert send_email_notification([_email_entry("P1", 0.7)], 19, **_SMTP_ARGS) is False
+
+
+def test_send_email_notification_does_not_raise_on_failure(monkeypatch):
+    def boom(*a, **kw):
+        raise main.smtplib.SMTPAuthenticationError(535, b"bad creds")
+
+    monkeypatch.setattr(main.smtplib, "SMTP", boom)
+    try:
+        send_email_notification([_email_entry("P1", 0.7)], 19, **_SMTP_ARGS)
+    except Exception as exc:  # noqa: BLE001 - the assertion is that none escapes
+        pytest.fail(f"send_email_notification raised unexpectedly: {exc}")
+
+
+# ---- dispatch_scheduled_email ----
+
+
+def _set_smtp_env(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_USERNAME", "user@example.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "pw")
+    monkeypatch.setenv("SUBSCRIBER_EMAIL", "me@example.com")
+    monkeypatch.delenv("SMTP_FROM", raising=False)
+
+
+def test_dispatch_scheduled_email_calls_send_per_grouping(monkeypatch):
+    calls = []
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "send_email_notification",
+        lambda ranked, hour, *a, **kw: calls.append(hour) or True,
+    )
+    summary = [
+        _summary_entry("P1", 0.8, game_hour=18),
+        _summary_entry("P2", 0.7, game_hour=19),
+    ]
+    dispatch_scheduled_email(summary, {}, "2026-08-10")
+    assert sorted(calls) == [18, 19]
+
+
+def test_dispatch_scheduled_email_marks_cache_only_on_success(monkeypatch):
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setattr(main, "send_email_notification", lambda *a, **kw: False)
+    cache: dict = {}
+    dispatch_scheduled_email(
+        [_summary_entry("P1", 0.8, game_hour=19)], cache, "2026-08-10"
+    )
+    assert cache == {}, "a failed send must retry on the next tick"
+
+
+def test_dispatch_scheduled_email_marks_cache_on_successful_send(monkeypatch):
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setattr(main, "send_email_notification", lambda *a, **kw: True)
+    cache: dict = {}
+    dispatch_scheduled_email(
+        [_summary_entry("P1", 0.8, game_hour=19)], cache, "2026-08-10"
+    )
+    assert cache == {"19": "2026-08-10"}
+
+
+def test_dispatch_scheduled_email_skips_an_already_sent_grouping(monkeypatch):
+    calls = []
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setattr(
+        main, "send_email_notification", lambda *a, **kw: calls.append(True) or True
+    )
+    dispatch_scheduled_email(
+        [_summary_entry("P1", 0.8, game_hour=19)], {"19": "2026-08-10"}, "2026-08-10"
+    )
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "missing", ["SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SUBSCRIBER_EMAIL"]
+)
+def test_dispatch_scheduled_email_skips_when_a_credential_is_absent(
+    monkeypatch, missing
+):
+    calls = []
+    _set_smtp_env(monkeypatch)
+    monkeypatch.delenv(missing)
+    monkeypatch.setattr(
+        main, "send_email_notification", lambda *a, **kw: calls.append(True) or True
+    )
+    dispatch_scheduled_email(
+        [_summary_entry("P1", 0.8, game_hour=19)], {}, "2026-08-10"
+    )
+    assert calls == []
+
+
+def test_dispatch_scheduled_email_non_numeric_port_skips_without_raising(monkeypatch):
+    calls = []
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setenv("SMTP_PORT", "not-a-port")
+    monkeypatch.setattr(
+        main, "send_email_notification", lambda *a, **kw: calls.append(True) or True
+    )
+    dispatch_scheduled_email(
+        [_summary_entry("P1", 0.8, game_hour=19)], {}, "2026-08-10"
+    )
+    assert calls == []
+
+
+def test_dispatch_scheduled_email_from_defaults_to_the_username(monkeypatch):
+    captured = {}
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "send_email_notification",
+        lambda *a, **kw: captured.update(from_address=a[6]) or True,
+    )
+    dispatch_scheduled_email(
+        [_summary_entry("P1", 0.8, game_hour=19)], {}, "2026-08-10"
+    )
+    assert captured["from_address"] == "user@example.com"
+
+
+def test_dispatch_scheduled_email_honours_an_explicit_from(monkeypatch):
+    captured = {}
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setenv("SMTP_FROM", "picks@example.com")
+    monkeypatch.setattr(
+        main,
+        "send_email_notification",
+        lambda *a, **kw: captured.update(from_address=a[6]) or True,
+    )
+    dispatch_scheduled_email(
+        [_summary_entry("P1", 0.8, game_hour=19)], {}, "2026-08-10"
+    )
+    assert captured["from_address"] == "picks@example.com"
+
+
+def test_dispatch_scheduled_email_empty_summary_no_send(monkeypatch):
+    calls = []
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setattr(
+        main, "send_email_notification", lambda *a, **kw: calls.append(True) or True
+    )
+    dispatch_scheduled_email([], {}, "2026-08-10")
+    assert calls == []
+
+
+# ---- email_sent_cache: persistence and independence from SMS ----
+
+
+def test_load_email_sent_cache_missing_file_returns_empty_dict(tmp_path):
+    assert load_email_sent_cache(tmp_path / "does_not_exist.json") == {}
+
+
+def test_load_email_sent_cache_corrupt_file_returns_empty_dict(tmp_path):
+    bad_file = tmp_path / "corrupt.json"
+    bad_file.write_text("not valid json")
+    assert load_email_sent_cache(bad_file) == {}
+
+
+def test_save_and_load_email_sent_cache_roundtrip(tmp_path):
+    cache_file = tmp_path / "email_sent_cache.json"
+    cache = {"19": "2026-08-10", "23": "2026-08-10"}
+    save_email_sent_cache(cache, cache_file)
+    assert load_email_sent_cache(cache_file) == cache
+
+
+def test_email_and_sms_sent_caches_are_separate_files():
+    """A grouping already texted must still be emailable.
+
+    Sharing one cache file would let whichever channel ran first mark the
+    grouping sent and silently suppress the other.
+    """
+    assert main.EMAIL_SENT_CACHE_FILE != main.SMS_SENT_CACHE_FILE
+
+
+def test_a_scheduled_run_sends_both_channels_against_separate_caches(
+    monkeypatch, tmp_path
+):
+    """The regression the split cache exists to prevent.
+
+    Drives `run` so the two dispatchers meet the way they do in production. A
+    shared cache file would let the SMS send mark hour 19 and silently suppress
+    the email, which is exactly the state the Twilio pending-verification
+    workaround has to survive.
+    """
+    sms_file = tmp_path / "sms_sent_cache.json"
+    email_file = tmp_path / "email_sent_cache.json"
+    monkeypatch.setattr(main, "SMS_SENT_CACHE_FILE", sms_file)
+    monkeypatch.setattr(main, "EMAIL_SENT_CACHE_FILE", email_file)
+
+    _set_twilio_env(monkeypatch)
+    _set_smtp_env(monkeypatch)
+    sms_calls, email_calls = [], []
+    monkeypatch.setattr(
+        main,
+        "send_sms_notification",
+        lambda ranked, hour, *a, **kw: sms_calls.append(hour) or True,
+    )
+    monkeypatch.setattr(
+        main,
+        "send_email_notification",
+        lambda ranked, hour, *a, **kw: email_calls.append(hour) or True,
+    )
+
+    summary = [_summary_entry("P1", 0.8, game_hour=19)]
+    main.dispatch_scheduled_sms(
+        summary, main.load_sms_sent_cache(sms_file), "2026-08-10"
+    )
+    email_cache = main.load_email_sent_cache(email_file)
+    main.dispatch_scheduled_email(summary, email_cache, "2026-08-10")
+
+    assert sms_calls == [19]
+    assert email_calls == [19], "the email must not be suppressed by the SMS send"
+    assert email_cache == {"19": "2026-08-10"}

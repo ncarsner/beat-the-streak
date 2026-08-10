@@ -1,0 +1,73 @@
+name: Notify
+
+# Runs every 15 minutes during 10am-10pm EDT (14:00-02:00 UTC, crossing midnight).
+# Gated by the SEASON_ACTIVE repository variable: set it to any non-empty value in
+# repo Settings > Variables to enable live runs. Clear it during the off-season.
+#
+# Two independent notification channels. Each is skipped, with a message and
+# without failing the run, when its own credentials are absent, so email works
+# while the Twilio number is still pending Toll-Free Verification.
+#
+# Email (active). Required repository secrets:
+#   SMTP_HOST
+#   SMTP_USERNAME
+#   SMTP_PASSWORD
+#   SUBSCRIBER_EMAIL
+# Optional: SMTP_PORT (defaults to 587), SMTP_FROM (defaults to SMTP_USERNAME).
+#
+# SMS (pending). Required repository secrets:
+#   TWILIO_ACCOUNT_SID
+#   TWILIO_AUTH_TOKEN
+#   TWILIO_FROM_NUMBER
+#   SUBSCRIBER_PHONE_NUMBER
+#
+# The `schedule:` trigger stays commented out until issue #49 is fixed: the slate
+# date comes from the runner clock, the runner is UTC, and the 0-2 UTC firings
+# therefore request tomorrow's games. A separate crash, fixed in 3d24fab, took
+# down every run that fetched a fresh lineup. Re-enable only after #49 lands and
+# a manual workflow_dispatch run is confirmed to deliver.
+on:
+  workflow_dispatch: {}
+  # schedule:
+  #   - cron: "*/15 14-23,0-2 * * *"
+
+jobs:
+  notify:
+    if: vars.SEASON_ACTIVE != ''
+    runs-on: ubuntu-latest
+    env:
+      TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+      TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+      TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+      SUBSCRIBER_PHONE_NUMBER: ${{ secrets.SUBSCRIBER_PHONE_NUMBER }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      SMTP_FROM: ${{ secrets.SMTP_FROM }}
+      SUBSCRIBER_EMAIL: ${{ secrets.SUBSCRIBER_EMAIL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Get current date
+        id: date
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/
+          key: notify-cache-${{ runner.os }}-${{ steps.date.outputs.date }}
+          restore-keys: notify-cache-${{ runner.os }}-
+
+      - name: Run scheduled notifications
+        run: python3 main.py --scheduled

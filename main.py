@@ -1,8 +1,10 @@
 import argparse
 import json
 import os
+import smtplib
 import requests
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from pathlib import Path
 from prettytable import PrettyTable
 from time import sleep
@@ -31,6 +33,12 @@ QUERIED_GAMES_CACHE_FILE = Path(__file__).parent / ".cache" / "queried_games_cac
 
 # Where successfully-sent SMS groupings are recorded to avoid re-sending on the same day.
 SMS_SENT_CACHE_FILE = Path(__file__).parent / ".cache" / "sms_sent_cache.json"
+
+# Where per-grouping email sends are recorded. Separate from the SMS cache on
+# purpose: the two channels send independently, so a grouping already texted
+# must still be emailable, and vice versa. Sharing one file would make whichever
+# channel ran first suppress the other.
+EMAIL_SENT_CACHE_FILE = Path(__file__).parent / ".cache" / "email_sent_cache.json"
 
 # Where /schedule request failures are logged for later review.
 SCHEDULE_ERROR_LOG_FILE = Path(__file__).parent / ".cache" / "schedule_fetch_errors.log"
@@ -116,8 +124,27 @@ def save_sms_sent_cache(cache, path=SMS_SENT_CACHE_FILE):
         json.dump(cache, f, indent=2, sort_keys=True)
 
 
+def load_email_sent_cache(path=EMAIL_SENT_CACHE_FILE):
+    """Return the {game_hour_str: date_str} cache from a prior run, or {} if absent/corrupt."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_email_sent_cache(cache, path=EMAIL_SENT_CACHE_FILE):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(cache, f, indent=2, sort_keys=True)
+
+
 def is_sms_sent_today(game_hour_utc: int, cache: dict, today: str) -> bool:
-    """True if an SMS for *game_hour_utc* was already sent on *today*."""
+    """True if a notification for *game_hour_utc* was already sent on *today*.
+
+    Channel-agnostic: both the SMS and the email dispatchers call this against
+    their own cache file, so the predicate is the same and the state is not.
+    """
     return cache.get(str(game_hour_utc)) == today
 
 
@@ -837,6 +864,124 @@ def dispatch_scheduled_sms(
             sms_sent_cache[str(game_hour)] = today
 
 
+def format_email_body(ranked_list: list[dict], game_hour_utc: int) -> tuple[str, str]:
+    """Return the (subject, body) for one start-time grouping's email.
+
+    Email is not length-constrained the way an SMS is, so this carries the same
+    columns as the printed table, `BB/K` included, rather than the SMS's name
+    and probability alone. Plate discipline is the column that most often
+    explains why the two probabilities disagree, so dropping it would leave the
+    reader with a delta and no way to interpret it.
+
+    Plain text, no HTML: the recipient is a single known address and a text part
+    renders everywhere without a multipart body.
+    """
+    subject = f"Beat the Streak: top picks for {game_hour_utc:02d}:00 UTC"
+    header = f"{'#':<3} {'Player':<22} {'Tm':<4} {'H-AB':<7} {'BB/K':<6} {'Prob %':<8} {'Model':<8} {'Delta':<7}"
+    lines = [subject, "", header, "-" * len(header)]
+    for i, player in enumerate(ranked_list, 1):
+        lines.append(
+            f"{i:<3} {player['Player']:<22} {player['Team']:<4} "
+            f"{f'{player["Hits"]}-{player["At Bats"]}':<7} "
+            f"{f'{player["Walks"]}/{player["Strikeouts"]}':<6} "
+            f"{f'{player["probability"]:.1%}':<8} "
+            f"{format_model(player.get('model')):<8} "
+            f"{format_delta(model_delta(player)):<7}"
+        )
+    lines += [
+        "",
+        "Prob %: 5-game heuristic through the binomial.",
+        "Model:  aggregate over every calculator reporting hits per plate appearance.",
+        "Delta:  Model minus Prob %, in percentage points.",
+        "Neither number has been validated against outcomes yet; ranking is Prob %.",
+    ]
+    return subject, "\n".join(lines)
+
+
+def send_email_notification(
+    ranked_list: list[dict],
+    game_hour_utc: int,
+    smtp_host: str,
+    smtp_port: int,
+    username: str,
+    password: str,
+    from_address: str,
+    to_address: str,
+) -> bool:
+    """Send one grouping's picks over SMTP. Returns True on success.
+
+    Mirrors `send_sms_notification`'s contract exactly, including returning
+    False rather than raising, so `dispatch_scheduled_email` can reuse the
+    send-cache discipline: a grouping is marked sent only on success, and a
+    failure retries on the next tick.
+
+    stdlib `smtplib` and `email.message`, so this adds no dependency, the same
+    reasoning that kept the Twilio path on raw `requests`.
+    """
+    subject, body = format_email_body(ranked_list, game_hour_utc)
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = from_address
+    message["To"] = to_address
+    message.set_content(body)
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as smtp:
+            smtp.starttls()
+            smtp.login(username, password)
+            smtp.send_message(message)
+    except (smtplib.SMTPException, OSError) as exc:
+        print(f"Email send failed ({exc})")
+        return False
+    return True
+
+
+def dispatch_scheduled_email(
+    summary: list[dict], email_sent_cache: dict, today: str
+) -> None:
+    """Send per-grouping email notifications. Only called in --scheduled mode.
+
+    Runs alongside `dispatch_scheduled_sms` rather than replacing it, and keeps
+    its own send-cache file. The two channels are independently gated on their
+    own credentials, so email works while the Twilio number is unverified and
+    neither one's failure suppresses the other.
+    """
+    grouped = group_picks_by_start_time(summary)
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_port = os.environ.get("SMTP_PORT", "587")
+    username = os.environ.get("SMTP_USERNAME", "")
+    password = os.environ.get("SMTP_PASSWORD", "")
+    to_address = os.environ.get("SUBSCRIBER_EMAIL", "")
+    # From defaults to the authenticated user, which is what most providers
+    # require anyway; a separate SMTP_FROM only matters for a distinct sender.
+    from_address = os.environ.get("SMTP_FROM", "") or username
+    if not all([smtp_host, username, password, to_address]):
+        print(
+            "Email send skipped: SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, "
+            "or SUBSCRIBER_EMAIL not set"
+        )
+        return
+    try:
+        port = int(smtp_port)
+    except ValueError:
+        print(f"Email send skipped: SMTP_PORT is not a number ({smtp_port!r})")
+        return
+    for game_hour, ranked in grouped.items():
+        if is_sms_sent_today(game_hour, email_sent_cache, today):
+            continue
+        success = send_email_notification(
+            ranked,
+            game_hour,
+            smtp_host,
+            port,
+            username,
+            password,
+            from_address,
+            to_address,
+        )
+        if success:
+            email_sent_cache[str(game_hour)] = today
+
+
 def run(args: argparse.Namespace) -> None:
     """Execute one full run with the given parsed arguments."""
     today = datetime.today().strftime("%Y-%m-%d")
@@ -901,6 +1046,10 @@ def run(args: argparse.Namespace) -> None:
         sms_sent_cache = load_sms_sent_cache()
         dispatch_scheduled_sms(summary, sms_sent_cache, today)
         save_sms_sent_cache(sms_sent_cache)
+
+        email_sent_cache = load_email_sent_cache()
+        dispatch_scheduled_email(summary, email_sent_cache, today)
+        save_email_sent_cache(email_sent_cache)
 
 
 def build_arg_parser():
