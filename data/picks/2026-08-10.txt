@@ -1,0 +1,55 @@
++------------------------------------------------------------------+
+|                Top 49 by Model (unvalidated, #35)                |
++----+-----------------------+-----+-------+------+--------+-------+
+| #  | Player                |  Tm |  H-AB | BB/K | Prob % | Model |
++----+-----------------------+-----+-------+------+--------+-------+
+| 1  | Ceddanne Rafaela      | BOS |  5-25 | 1/5  | 68.7%  | 74.0% |
+| 2  | Jordan Walker         | STL |  8-23 | 0/2  | 86.0%  | 70.4% |
+| 3  | Alec Burleson         | STL |  2-15 | 4/5  | 41.9%  | 69.8% |
+| 4  | Bo Bichette           | NYM |  9-22 | 2/5  | 92.0%  | 69.2% |
+| 5  | Michael Harris II     | ATL |  7-19 | 0/3  | 82.6%  | 67.9% |
+| 6  | Willson Contreras     | BOS |  4-17 | 1/7  | 61.9%  | 67.8% |
+| 7  | Nick Sogard           | BOS |  5-21 | 3/6  | 72.9%  | 67.8% |
+| 8  | Nathan Lukes          | TOR |  7-23 | 0/5  | 81.2%  | 67.7% |
+| 9  | Ryan Jeffers          | MIN |  3-14 | 4/5  | 58.0%  | 67.6% |
+| 10 | Masataka Yoshida      | BOS |  8-19 | 2/1  | 89.9%  | 67.6% |
+| 11 | Carson Benge          | NYM |  9-22 | 1/4  | 91.1%  | 67.0% |
+| 12 | A.J. Ewing            | NYM |  4-18 | 3/5  | 65.2%  | 67.0% |
+| 13 | Drake Baldwin         | ATL |  6-22 | 0/5  | 75.4%  | 66.7% |
+| 14 | Wilyer Abreu          | BOS |  7-16 | 5/2  | 91.1%  | 66.6% |
+| 15 | Iván Herrera          | STL | 10-23 | 0/6  | 92.8%  | 66.1% |
+| 16 | JJ Wetherholt         | STL |  4-17 | 6/1  | 70.9%  | 66.0% |
+| 17 | Josh Bell             | MIN |  6-18 | 4/1  | 83.2%  | 65.8% |
+| 18 | Matt Olson            | ATL |  4-19 | 2/8  | 62.9%  | 65.2% |
+| 19 | Vladimir Guerrero Jr. | TOR |  3-20 | 2/6  | 51.1%  | 65.1% |
+| 20 | Jesús Sánchez         | TOR |  3-10 | 3/3  | 60.4%  | 64.8% |
+| 21 | Royce Lewis           | MIN |  6-21 | 0/7  | 75.7%  | 64.8% |
+| 22 | Nathan Church         | STL |  6-19 | 1/4  | 78.1%  | 64.6% |
+| 23 | Caleb Durbin          | BOS |  6-18 | 3/3  | 81.8%  | 64.4% |
+| 24 | Mauricio Dubón        | ATL |  8-18 | 1/1  | 89.3%  | 64.3% |
+| 25 | Austin Martin         | MIN |  2-14 | 1/3  | 37.0%  | 64.1% |
+| 26 | Brett Bateman         | TOR |  3-14 | 2/4  | 53.8%  | 64.0% |
+| 27 | Francisco Lindor      | NYM |  5-20 | 3/9  | 73.4%  | 63.9% |
+| 28 | Luke Keaschall        | MIN |  5-20 | 2/3  | 71.8%  | 63.4% |
+| 29 | Anthony Seigler       | BOS |  5-15 | 2/3  | 74.8%  | 62.9% |
+| 30 | Jared Young           | NYM |  7-18 | 2/3  | 86.1%  | 62.4% |
+| 31 | Andrés Giménez        | TOR |  7-20 | 1/6  | 83.6%  | 61.9% |
+| 32 | Ozzie Albies          | ATL |  2-15 | 3/2  | 40.3%  | 61.7% |
+| 33 | Kaelen Culpepper      | MIN |  1-5  | 1/1  | 23.5%  | 61.7% |
+| 34 | George Springer       | TOR |  1-12 | 2/1  | 21.6%  | 61.5% |
+| 35 | Ronald Acuña Jr.      | ATL |  6-22 | 0/4  | 75.4%  | 61.0% |
+| 36 | Brooks Lee            | MIN |  3-19 | 1/5  | 49.7%  | 60.1% |
+| 37 | Marcus Semien         | NYM |  5-18 | 3/3  | 74.5%  | 59.4% |
+| 38 | Connor Wong           | BOS |  2-14 | 0/3  | 35.1%  | 58.5% |
+| 39 | Francisco Alvarez     | NYM |  4-18 | 3/8  | 65.2%  | 58.2% |
+| 40 | Ryan Kreidler         | MIN |  3-13 | 0/4  | 49.4%  | 58.1% |
+| 41 | Brett Baty            | NYM |  2-15 | 0/6  | 34.9%  | 57.7% |
+| 42 | Jarren Duran          | BOS |  3-19 | 2/6  | 51.4%  | 56.9% |
+| 43 | Victor Caratini       | MIN |  2-12 | 4/5  | 44.2%  | 56.4% |
+| 44 | Austin Riley          | ATL |  4-17 | 1/8  | 61.9%  | 55.8% |
+| 45 | Brandon Valenzuela    | TOR |  4-15 | 1/8  | 62.9%  | 55.7% |
+| 46 | Josh Smith            | TOR |  3-13 | 2/6  | 54.5%  | 55.2% |
+| 47 | Jim Jarvis            | ATL |  1-14 | 0/4  | 18.7%  | 55.1% |
+| 48 | Jorge Polanco         | NYM |  2-18 | 1/7  | 36.1%  | 51.9% |
+| 49 | Sean Murphy           | ATL |  2-19 | 0/8  | 34.5%  | 47.3% |
++----+-----------------------+-----+-------+------+--------+-------+

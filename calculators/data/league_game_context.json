@@ -1,0 +1,12 @@
+{
+  "season": 2026,
+  "generated": "2026-08-09",
+  "source": "https://statsapi.mlb.com/api/v1/schedule?gameType=R&hydrate=linescore",
+  "note": "skipped_ninth is the share of completed regular-season games reaching 9 innings in which the home team never batted in the bottom of the ninth. pa_lost_per_skipped_ninth is the ROADMAP's own figure for CALC_45, not measured here: the linescore reports runs and hits per inning, not plate appearances.",
+  "skipped_ninth": {
+    "rate": 0.44293015332197616,
+    "denominator": 1761,
+    "skipped": 780
+  },
+  "pa_lost_per_skipped_ninth": 0.5
+}

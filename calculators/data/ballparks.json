@@ -1,0 +1,548 @@
+{
+  "season": 2026,
+  "generated": "2026-08-09",
+  "source": "MLB Stats API /venues?hydrate=location,fieldInfo,timezone",
+  "note": "fences_ft is [leftLine, leftCenter, center, rightCenter, rightLine] in feet, matching the spray sectors CALC_33 divides the field into. Wall heights are not published by this endpoint and are absent here.",
+  "venues": {
+    "1": {
+      "name": "Angel Stadium",
+      "elevation_ft": 151,
+      "azimuth_degrees": 43.61,
+      "latitude": 33.80019044,
+      "longitude": -117.8823996,
+      "timezone_id": "America/Los_Angeles",
+      "utc_offset_hours": -7,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        330,
+        389,
+        396,
+        365,
+        330
+      ]
+    },
+    "2": {
+      "name": "Oriole Park at Camden Yards",
+      "elevation_ft": 33,
+      "azimuth_degrees": 31.0,
+      "latitude": 39.283787,
+      "longitude": -76.621689,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        333,
+        376,
+        410,
+        373,
+        318
+      ]
+    },
+    "3": {
+      "name": "Fenway Park",
+      "elevation_ft": 21,
+      "azimuth_degrees": 45.0,
+      "latitude": 42.346456,
+      "longitude": -71.097441,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        310,
+        390,
+        420,
+        380,
+        302
+      ]
+    },
+    "4": {
+      "name": "Rate Field",
+      "elevation_ft": 595,
+      "azimuth_degrees": 127.0,
+      "latitude": 41.83,
+      "longitude": -87.634167,
+      "timezone_id": "America/Chicago",
+      "utc_offset_hours": -5,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        330,
+        377,
+        400,
+        372,
+        335
+      ]
+    },
+    "5": {
+      "name": "Progressive Field",
+      "elevation_ft": 653,
+      "azimuth_degrees": 0.0,
+      "latitude": 41.495861,
+      "longitude": -81.685255,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        325,
+        410,
+        405,
+        375,
+        325
+      ]
+    },
+    "7": {
+      "name": "Kauffman Stadium",
+      "elevation_ft": 856,
+      "azimuth_degrees": 46.0,
+      "latitude": 39.051567,
+      "longitude": -94.480483,
+      "timezone_id": "America/Chicago",
+      "utc_offset_hours": -5,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        347,
+        379,
+        410,
+        379,
+        344
+      ]
+    },
+    "12": {
+      "name": "Tropicana Field",
+      "elevation_ft": 15,
+      "azimuth_degrees": 359.0,
+      "latitude": 27.767778,
+      "longitude": -82.6525,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Dome",
+      "turf_type": "Artificial Turf",
+      "fences_ft": [
+        315,
+        410,
+        404,
+        404,
+        322
+      ]
+    },
+    "14": {
+      "name": "Rogers Centre",
+      "elevation_ft": 270,
+      "azimuth_degrees": 345.0,
+      "latitude": 43.64155,
+      "longitude": -79.38915,
+      "timezone_id": "America/Toronto",
+      "utc_offset_hours": -4,
+      "roof_type": "Retractable",
+      "turf_type": "Artificial Turf",
+      "fences_ft": [
+        328,
+        375,
+        404,
+        375,
+        328
+      ]
+    },
+    "15": {
+      "name": "Chase Field",
+      "elevation_ft": 1086,
+      "azimuth_degrees": 0.0,
+      "latitude": 33.445302,
+      "longitude": -112.066687,
+      "timezone_id": "America/Phoenix",
+      "utc_offset_hours": -7,
+      "roof_type": "Retractable",
+      "turf_type": "Artificial Turf",
+      "fences_ft": [
+        328,
+        412,
+        407,
+        414,
+        335
+      ]
+    },
+    "17": {
+      "name": "Wrigley Field",
+      "elevation_ft": 595,
+      "azimuth_degrees": 37.0,
+      "latitude": 41.948171,
+      "longitude": -87.655503,
+      "timezone_id": "America/Chicago",
+      "utc_offset_hours": -5,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        355,
+        368,
+        400,
+        368,
+        353
+      ]
+    },
+    "19": {
+      "name": "Coors Field",
+      "elevation_ft": 5190,
+      "azimuth_degrees": 4.0,
+      "latitude": 39.756042,
+      "longitude": -104.994136,
+      "timezone_id": "America/Denver",
+      "utc_offset_hours": -6,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        347,
+        420,
+        415,
+        424,
+        350
+      ]
+    },
+    "22": {
+      "name": "UNIQLO Field at Dodger Stadium",
+      "elevation_ft": 515,
+      "azimuth_degrees": 26.0,
+      "latitude": 34.07368,
+      "longitude": -118.24053,
+      "timezone_id": "America/Los_Angeles",
+      "utc_offset_hours": -7,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        330,
+        385,
+        395,
+        385,
+        330
+      ]
+    },
+    "31": {
+      "name": "PNC Park",
+      "elevation_ft": 780,
+      "azimuth_degrees": 116.0,
+      "latitude": 40.446904,
+      "longitude": -80.005753,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        325,
+        410,
+        399,
+        375,
+        320
+      ]
+    },
+    "32": {
+      "name": "American Family Field",
+      "elevation_ft": 597,
+      "azimuth_degrees": 129.0,
+      "latitude": 43.02838,
+      "longitude": -87.97099,
+      "timezone_id": "America/Chicago",
+      "utc_offset_hours": -5,
+      "roof_type": "Retractable",
+      "turf_type": "Grass",
+      "fences_ft": [
+        344,
+        371,
+        400,
+        374,
+        345
+      ]
+    },
+    "680": {
+      "name": "T-Mobile Park",
+      "elevation_ft": 10,
+      "azimuth_degrees": 49.0,
+      "latitude": 47.591333,
+      "longitude": -122.33251,
+      "timezone_id": "America/Los_Angeles",
+      "utc_offset_hours": -7,
+      "roof_type": "Retractable",
+      "turf_type": "Grass",
+      "fences_ft": [
+        331,
+        390,
+        405,
+        387,
+        327
+      ]
+    },
+    "2392": {
+      "name": "Daikin Park",
+      "elevation_ft": 45,
+      "azimuth_degrees": 343.0,
+      "latitude": 29.756967,
+      "longitude": -95.355509,
+      "timezone_id": "America/Chicago",
+      "utc_offset_hours": -5,
+      "roof_type": "Retractable",
+      "turf_type": "Grass",
+      "fences_ft": [
+        315,
+        362,
+        409,
+        373,
+        326
+      ]
+    },
+    "2394": {
+      "name": "Comerica Park",
+      "elevation_ft": 600,
+      "azimuth_degrees": 150.0,
+      "latitude": 42.3391151,
+      "longitude": -83.048695,
+      "timezone_id": "America/Detroit",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        345,
+        370,
+        420,
+        365,
+        330
+      ]
+    },
+    "2395": {
+      "name": "Oracle Park",
+      "elevation_ft": 0,
+      "azimuth_degrees": 85.0,
+      "latitude": 37.778383,
+      "longitude": -122.389448,
+      "timezone_id": "America/Los_Angeles",
+      "utc_offset_hours": -7,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        339,
+        399,
+        391,
+        415,
+        309
+      ]
+    },
+    "2529": {
+      "name": "Sutter Health Park",
+      "elevation_ft": 24,
+      "azimuth_degrees": 46.0,
+      "latitude": 38.57994,
+      "longitude": -121.51246,
+      "timezone_id": "America/Los_Angeles",
+      "utc_offset_hours": -7,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        330,
+        380,
+        403,
+        380,
+        325
+      ]
+    },
+    "2602": {
+      "name": "Great American Ball Park",
+      "elevation_ft": 535,
+      "azimuth_degrees": 122.0,
+      "latitude": 39.097389,
+      "longitude": -84.506611,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        328,
+        379,
+        404,
+        370,
+        325
+      ]
+    },
+    "2680": {
+      "name": "Petco Park",
+      "elevation_ft": 23,
+      "azimuth_degrees": 0.0,
+      "latitude": 32.707861,
+      "longitude": -117.157278,
+      "timezone_id": "America/Los_Angeles",
+      "utc_offset_hours": -7,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        336,
+        386,
+        396,
+        391,
+        322
+      ]
+    },
+    "2681": {
+      "name": "Citizens Bank Park",
+      "elevation_ft": 20,
+      "azimuth_degrees": 9.0,
+      "latitude": 39.90539086,
+      "longitude": -75.16716957,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        329,
+        381,
+        401,
+        398,
+        330
+      ]
+    },
+    "2889": {
+      "name": "Busch Stadium",
+      "elevation_ft": 460,
+      "azimuth_degrees": 62.0,
+      "latitude": 38.62256667,
+      "longitude": -90.19286667,
+      "timezone_id": "America/Chicago",
+      "utc_offset_hours": -5,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        336,
+        375,
+        400,
+        375,
+        335
+      ]
+    },
+    "3289": {
+      "name": "Citi Field",
+      "elevation_ft": 10,
+      "azimuth_degrees": 13.0,
+      "latitude": 40.75753012,
+      "longitude": -73.84559155,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        335,
+        370,
+        408,
+        380,
+        330
+      ]
+    },
+    "3309": {
+      "name": "Nationals Park",
+      "elevation_ft": 35,
+      "azimuth_degrees": 28.0,
+      "latitude": 38.872861,
+      "longitude": -77.007501,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        336,
+        377,
+        402,
+        370,
+        335
+      ]
+    },
+    "3312": {
+      "name": "Target Field",
+      "elevation_ft": 828,
+      "azimuth_degrees": 129.0,
+      "latitude": 44.981829,
+      "longitude": -93.277891,
+      "timezone_id": "America/Chicago",
+      "utc_offset_hours": -5,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        339,
+        377,
+        404,
+        367,
+        328
+      ]
+    },
+    "3313": {
+      "name": "Yankee Stadium",
+      "elevation_ft": 55,
+      "azimuth_degrees": 75.0,
+      "latitude": 40.82919482,
+      "longitude": -73.9264977,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        318,
+        399,
+        408,
+        385,
+        314
+      ]
+    },
+    "4169": {
+      "name": "loanDepot park",
+      "elevation_ft": 10,
+      "azimuth_degrees": 128.0,
+      "latitude": 25.77796236,
+      "longitude": -80.21951795,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Retractable",
+      "turf_type": "Artificial Turf",
+      "fences_ft": [
+        344,
+        386,
+        407,
+        392,
+        335
+      ]
+    },
+    "4705": {
+      "name": "Truist Park",
+      "elevation_ft": 1001,
+      "azimuth_degrees": 145.0,
+      "latitude": 33.890672,
+      "longitude": -84.467641,
+      "timezone_id": "America/New_York",
+      "utc_offset_hours": -4,
+      "roof_type": "Open",
+      "turf_type": "Grass",
+      "fences_ft": [
+        335,
+        385,
+        400,
+        375,
+        325
+      ]
+    },
+    "5325": {
+      "name": "Globe Life Field",
+      "elevation_ft": 545,
+      "azimuth_degrees": 30.0,
+      "latitude": 32.747299,
+      "longitude": -97.081818,
+      "timezone_id": "America/Chicago",
+      "utc_offset_hours": -5,
+      "roof_type": "Retractable",
+      "turf_type": "Artificial Turf",
+      "fences_ft": [
+        329,
+        372,
+        407,
+        374,
+        326
+      ]
+    }
+  }
+}

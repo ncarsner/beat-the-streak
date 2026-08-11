@@ -28,16 +28,22 @@ The metric is intentionally lightweight and designed to complement, not replace,
    cd beat-the-streak
    ```
 
-3. Create and activate a virtual environment:
+3. Install dependencies. This project uses [**uv**](https://docs.astral.sh/uv/):
+   ```bash
+   uv sync
+   ```
+
+   Or with pip, if you prefer:
    ```bash
    python -m venv .venv
    source .venv/bin/activate   # Windows: .venv\Scripts\activate
-   ```
-
-4. Install dependencies:
-   ```bash
    pip install -r requirements.txt
    ```
+
+   Either includes **pybaseball**, which the Statcast calculators need and which pulls a
+   large transitive tree (pandas, numpy, altair, cryptography). Nothing in the daily run
+   imports it — if you only want to run the ranking tool, `requests` and `prettytable` are
+   enough. The scheduled GitHub Actions workflow installs `requests` only.
 
 No API key or config file is required: the MLB Stats API is public and free to use.
 
@@ -76,7 +82,7 @@ A player is skipped if they have no game log for the season, haven't played with
 imminent games so the tool only fires when lineups are actually relevant. Manual mode is
 useful for ad-hoc runs where you want to see all games still to be played today.
 
-`MAX_PLAYERS` (default `10`) in `main.py` caps the total number of players processed per run
+`MAX_PLAYERS` (default `50`) in `main.py` caps the total number of players processed per run
 after window and lineup selection.
 
 ### SMS notifications
@@ -129,6 +135,927 @@ python main.py --cooldown-days 3
 
 Use `--cooldown-days 0` to disable the cooldown and recheck every player on every run.
 
+### Model calculators
+
+Calculators live in the `calculators/` package, one module per `ROADMAP.md` category, so a
+calculator sits with the others that share its data source. Most are batter-versus-pitcher
+matchups; Categories 8 and 9 are single-sided, reporting one player's recent form.
+
+```
+calculators/
+    __init__.py                          # public surface
+    common.py                            # Window, roles, Rate, and the shared Statcast vocabulary
+    baselines.py                         # loaders for generated league-reference data
+    data/                                # generated reference data, checked in
+    category_01_bvp_matchups.py          # CALC_01-08
+    category_02_platoon_splits.py        # CALC_09-15
+    category_03_pitch_arsenal.py         # CALC_16-23
+    category_04_plate_discipline.py      # CALC_24-30
+    category_05_ballpark_environment.py  # CALC_31-40
+    category_06_lineup_game_context.py   # CALC_41-46
+    category_08_batter_form.py           # CALC_52-59
+    category_09_pitcher_form.py          # CALC_60-65
+    category_10_defense_schedule.py      # CALC_66-71
+    sources/                             # the only package here that touches the network
+        common.py                        #   HTTP + Statcast response cache
+        category_01_bvp_matchups.py
+        category_02_platoon_splits.py
+        category_03_pitch_arsenal.py
+        category_04_plate_discipline.py
+        category_05_ballpark_environment.py
+        category_06_lineup_game_context.py
+        category_08_batter_form.py
+        category_09_pitcher_form.py
+        category_10_defense_schedule.py
+tests/                                   # mirrors the module layout, one file per module
+scripts/                                 # on-demand generators, never run by the tool
+```
+
+`MLB_API_BASE` lives in `mlb_api.py`, shared by `main.py` and the source modules.
+
+The convention, applied to each category as it lands:
+
+| Thing | Pattern | Example |
+|---|---|---|
+| Module | `category_NN_<slug>.py` | `category_01_bvp_matchups.py` |
+| Calculator | `calc_NN_<slug>(...)` | `calc_01_bvp_career_hit_rate` |
+| Category aggregate | `compute_category_NN(...)` | `compute_category_01` |
+| Fetch (in `sources/`) | `fetch_<subject>(...)` | `fetch_bvp_stats` |
+| Test module | `tests/test_<module>.py` | `tests/test_category_01_bvp_matchups.py` |
+
+Pure calculator modules never import `sources`, which is what keeps the arithmetic testable
+without mocking a request.
+
+#### The cross-category contract
+
+Two shared types in `common.py` keep eleven categories speaking the same language.
+
+**`Window`** — the temporal scope a calculator operates over, applied as a local slice over
+one season-wide fetch rather than as a separate request per window:
+
+| Window | Meaning |
+|---|---|
+| `CAREER()` | everything available |
+| `SEASON()` | the anchor season only |
+| `DAYS(n)` | the `n` calendar days **ending yesterday** — today's game has not been played |
+| `GAMES(n)` | the last `n` distinct games, appearance-anchored |
+| `PLATE_APPEARANCES(n)` | the last `n` PAs, appearance-anchored |
+| `SEASONS(n)` | the last `n` seasons, inclusive of the anchor |
+
+`DAYS(n)` is calendar-anchored on purpose. A hitter returning from a 12-day injured-list stint
+gets a 14-day window containing one game, and the `Rate`'s denominator says so — rather than
+reaching back five weeks to manufacture a full sample that would look current and not be.
+An empty window returns `None`: absence of evidence, never a 0.0 rate.
+
+**Role** — what the composite model is allowed to do with a value. Every calculator tags its
+own return, so `CALC_75` dispatches on the tag instead of carrying a lookup table of what each
+of 76 numbers means:
+
+| Role | Meaning |
+|---|---|
+| `PROBABILITY` | blends into `p_hit` |
+| `MULTIPLIER` | scales `p_hit`; **not** a probability |
+| `EXPONENT` | feeds `PA_proj`, the exponent — not `p_hit` |
+| `DELTA` | signed adjustment; may be negative, not clamped to [0, 1] |
+
+This is what makes adding a park factor to a hit rate a type error rather than a
+plausible-looking number.
+
+Every value carries a `Rate` — the number **and** the sample size it came from. No calculator
+returns a bare float, because a 1-for-2 head-to-head line is not evidence of a .500 hitter,
+and the composite needs the count to shrink small samples toward a prior.
+
+`category_01_bvp_matchups.py` implements the Category 1 (batter-vs-pitcher, "BvP")
+considerations, using the MLB Stats API's `vsPlayer` stat type. One request per batter covers
+all four — it returns a split for every season the pair has faced each other, plus a career
+total:
+
+| ID | Calculator | Definition |
+|---|---|---|
+| `CALC_01` | BvP Career Hit Rate | H / PA across all head-to-head plate appearances |
+| `CALC_02` | BvP Season Hit Rate | H / PA head-to-head in the current season |
+| `CALC_03` | BvP Recent Window Hit Rate | H / PA head-to-head over the last 3 calendar years |
+| `CALC_04` | BvP Contact Rate | (PA − SO − BB) / PA head-to-head |
+| `CALC_05` | BvP Hard Hit % | batted balls ≥ 95 mph exit velocity / batted balls |
+| `CALC_06` | BvP xBA / xwOBA | mean expected BA and wOBA on contact (two keys) |
+| `CALC_07` | BvP Whiff Rate | swings and misses / total swings |
+| `CALC_08` | BvP Putaway Rate | strikeouts / pitches in two-strike counts |
+
+Each returns a `Rate` — the value paired with the sample size behind it — or `None` when the
+pair has never faced each other, when no starter has been announced, or when the game begins
+with an unlisted opener.
+
+**These calculators are not part of the daily run yet.** Nothing calls them, they do not appear
+in the output table, and they do not affect the ranking — no BvP request is made during a run.
+They are built and tested ahead of the composite model (`CALC_75`), which is where a BvP rate
+gets shrunk toward a prior before it can influence anything; a 1-for-2 career line is not
+evidence of a .500 hitter. `calculators/sources.py` holds the I/O half ready for that release:
+`fetch_bvp_stats` (one request per batter, covering all four) and `attach_category_01`.
+`main.py` imports nothing from the package.
+
+Supporting groundwork *is* live, since it costs no extra requests: `fetch_schedule` hydrates
+`probablePitcher`, and each lineup entry carries the `opposing_pitcher_id` of the other side's
+announced starter.
+
+`CALC_01`–`CALC_04` come from the MLB Stats API. `CALC_05`–`CALC_08` need Statcast pitch-level
+data, which that API does not expose per batter-pitcher pair, so they come from Baseball Savant
+via **pybaseball** (`fetch_bvp_statcast`). Two consequences worth knowing:
+
+- **They are season-scoped, not career-scoped.** Statcast starts in 2015 and `statcast_batter`
+  pulls one season per call, so `CALC_05`–`CALC_08` describe a different span of time than
+  `CALC_01`'s true career window. The season is a parameter on the fetch.
+- **`CALC_06` is emitted under two keys**, `CALC_06_XBA` and `CALC_06_XWOBA` — the one ROADMAP
+  consideration carrying two metrics.
+
+Swing and whiff classification for `CALC_07` is by Statcast `description`, listed exactly in
+`SWING_DESCRIPTIONS` / `WHIFF_DESCRIPTIONS`. A tipped ball counts as a swing but not a miss,
+since ROADMAP defines the calculator as "swings and misses".
+
+pybaseball is imported lazily inside the fetch function, never at module scope: it pulls in
+pandas and a large transitive tree, and neither the daily run nor most of the test suite needs
+it. The scheduled workflow installs `requests` only and does not read `requirements.txt`, so
+the cron is unaffected.
+
+The API's two groups are independently unreliable, so career totals are summed from the
+per-season splits and the API's own `vsPlayerTotal` line is used only as a fallback. Both
+failure modes have been observed live on the same batter-pitcher pair minutes apart: a
+`vsPlayerTotal` of 2 PA against a season split of 3 PA, and an empty season-split list
+alongside a populated 3 PA total. Deriving career from the splits keeps `CALC_01`'s sample
+from ever being smaller than `CALC_03`'s window over the same matchup; when no splits come
+back at all, `CALC_02` and `CALC_03` are `None` while `CALC_01` still reports the total.
+
+### Platoon and handedness calculators
+
+`category_02_platoon_splits.py` implements Category 2 (`CALC_09`–`CALC_15`). Handedness comes
+from one batched `GET /people?personIds=...` covering every batter and probable starter in the
+run — **not** from the lineup or schedule payloads, which do not carry `batSide` or `pitchHand`
+at all, with or without `hydrate=probablePitcher(person)`.
+
+| ID | Calculator | Source | Role |
+|---|---|---|---|
+| `CALC_09` | Hitter season vs. pitcher throws | `statSplits` | `PROBABILITY` |
+| `CALC_10` | Hitter recent (14d) vs. pitcher throws | Statcast | `PROBABILITY` (+ xBA key) |
+| `CALC_11` | Pitcher season vs. batter bats | `statSplits` | `PROBABILITY` |
+| `CALC_12` | Pitcher recent (14d) vs. batter bats | Statcast | `PROBABILITY` (+ xBA key) |
+| `CALC_13` | Switch-hitter split acuity | `statSplits` | `DELTA` |
+| `CALC_14` | Arm slot / release angle match | Statcast | `PROBABILITY` |
+| `CALC_15` | Reverse platoon split index | `statSplits` + league 2×2 | `MULTIPLIER` |
+
+The two 14-day calculators come from Statcast rather than the Stats API because **`sitCodes`
+and date ranges do not compose** there: `byDateRange` honors the window and silently drops the
+split, while `statSplits` honors the split and silently ignores the window. There is no
+Stats-API path to a date-windowed handedness split.
+
+Rates are **per plate appearance**, not per at-bat. The ROADMAP words several of these as "BA",
+but `p_hit` is defined per PA and combined as `1 − (1 − p_hit)^PA_proj`; an H/AB rate fed into a
+per-PA exponent overstates by roughly ten percent, since walks leave the AB denominator.
+
+`CALC_13` and `CALC_15` carry the **limiting** side's denominator — a differential is only as
+trustworthy as its thinner half, and for switch hitters that half is the off-side sample a
+platoon-savvy manager spends all season avoiding.
+
+`CALC_14` buckets arm angle at **30°** and **42°**, tertile-balanced against a measured sample
+of 233 pitchers (median 37°, min −61° submarine, max 69° — nobody throws from 90°). The
+conventional 20°/45° boundaries were rejected: they put 70% of the league in one bucket, which
+would have `CALC_14` measuring a hitter against nearly everyone.
+
+### League platoon baseline
+
+`CALC_15` (reverse platoon split index) measures a hitter's own platoon gap against the
+direction expected for their handedness, which needs a league baseline conditioned on
+**both** hands. `calculators/data/league_platoon_baseline.json` holds that 2×2, generated
+on demand rather than fetched per run:
+
+```bash
+uv run python -m scripts.generate_league_platoon_baseline
+```
+
+Four requests, a few seconds. The pooled vs-L / vs-R figures cannot substitute: aggregated
+across all hitters they come out nearly identical (.2423 and .2444), because left- and
+right-handed batters have opposite platoon advantages that cancel. Conditioned on batter
+hand the effect is plain — each hand hits roughly 10–17 points better against the opposite
+hand. Team-level aggregates cannot produce this, since teams are not split by batter hand.
+
+Switch hitters are excluded; they have no fixed batter hand, and `CALC_13` handles them.
+
+### Pitch arsenal and movement calculators
+
+`category_03_pitch_arsenal.py` implements Category 3 (`CALC_16`–`CALC_23`), entirely from
+Statcast pitch-level columns. Every one of them takes **both** sides of the matchup: the
+starter's rows establish what he throws, the hitter's rows how he fares against that class
+of pitch. The hitter's side is deliberately not restricted to this starter — Category 1
+already owns the head-to-head question and returns nothing when the pair has never met, so
+Category 3 is what still has a sample against a rookie.
+
+| Calculator | Primary key | Secondary key |
+|---|---|---|
+| `CALC_16`/`17`/`18` | hitter xBA on fastballs / breaking / offspeed | `_USAGE`: the starter's share of that class |
+| `CALC_19` | run value per 100 pitches on the starter's top-2 types (`DELTA`, in runs) | — |
+| `CALC_20` | hitter H/PA in the starter's fastball velocity bracket | — |
+| `CALC_21` | hitter H/PA against the starter's fastball approach-angle tier | `_PLANE_MISMATCH`: swing plane vs. pitch plane, in degrees |
+| `CALC_22` | hitter H/PA against extreme horizontal break | `_USAGE`: the starter's share of it |
+| `CALC_23` | hitter H/PA in the starter's release-extension tier | `_VELO_GAIN`: mph that extension buys, `DELTA` |
+
+Three decisions worth knowing before reading the numbers.
+
+**Two keys, not their product.** The ROADMAP writes `CALC_16` as "hitter xBA × pitcher usage
+%", but that product is not a quantity anything can read — a .300 xBA against a starter who
+throws 55% fastballs multiplies to .165, which is neither an expected average nor a usage.
+Both terms survive and `CALC_75` weights them. The three usage shares divide by *typed*
+pitches rather than by their own sum, so they come to slightly under 1 and the unclassified
+residue (pitchouts, intentional balls, the odd eephus — about 0.1% of league pitches) stays
+visible instead of being silently redistributed.
+
+**Terminal-pitch attribution.** Category 2 filters on attributes that hold constant across a
+plate appearance, so it can keep every pitch of one. Category 3 filters on attributes that
+change pitch to pitch — a PA can see a 96 mph fastball and an 84 mph slider — so each PA is
+reduced to the pitch that *ended* it before any tier filter runs. Verified against Statcast:
+the maximum-`pitch_number` row of a PA is exactly the row carrying a terminal `events` value,
+240 of 240 in the probe sample.
+
+**`CALC_21` does not take its value from swing plane.** Statcast's bat-tracking `attack_angle`
+measures it directly and would be the obvious primary, but the column is entirely null before
+2024 and populated only on pitches the batter swung at. A calculator depending on it returns
+`None` across most of any backtest, which is exactly what makes it useless to the validation
+harness. Swing plane is emitted as the secondary `CALC_21_PLANE_MISMATCH` in signed degrees
+(zero means the swing parallels the incoming pitch), and the primary is a hit rate on the
+same probability scale as everything else.
+
+Tier boundaries are measured rather than assumed, against 20,545 pitches seen by 12 regular
+hitters over the 2026 season. Vertical approach angle is solved from the release-point
+velocity and acceleration vectors — Statcast publishes the trajectory terms but not the
+angle — and the solution's sign was validated by the ordering it produces: four-seamers
+flattest at −4.63°, then sinkers, cutters, the breaking balls, and curveballs steepest at
+−9.52°. It is tiered over **fastballs only**, because pooled across pitch types VAA mostly
+measures arsenal mix rather than delivery.
+
+`pfx_x` is in feet; Baseball Savant displays the same quantity in inches. The constant is
+named `EXTREME_PFX_X_FEET` so the 12× error has somewhere to fail loudly.
+
+### Plate discipline and zone location calculators
+
+`category_04_plate_discipline.py` implements Category 4 (`CALC_24`-`CALC_30`), also entirely
+from Statcast pitch-level columns and also two-sided. Every calculator emits two keys, the
+hitter's rate and the pitcher rate that pairs with it, for the same reason Category 3 does.
+
+| Calculator | Hitter key | Pitcher key |
+|---|---|---|
+| `CALC_24` | zone-contact rate, contact per in-zone swing | `_ZONE_RATE`: share of tracked pitches in the zone |
+| `CALC_25` | chase rate, swings per out-of-zone pitch seen | `_OZONE_RATE`: share of tracked pitches out of the zone |
+| `CALC_26` | whiff rate, per swing | `_SWSTR`: swinging strikes, per pitch |
+| `CALC_27` | called-strike-plus-whiff rate allowed, per pitch | `_PITCHER_CSW`: the same rate generated |
+| `CALC_28` | 0-0 swing rate | `_F_STRIKE`: first-pitch strike rate |
+| `CALC_29` | two-strike contact rate, per swing | `_PITCHER_OUT`: outs per plate appearance reaching two strikes |
+| `CALC_30` | zone xBA weighted by where the starter works (`PROBABILITY`) | `_COVERAGE`: share of his in-zone pitches the hitter has a sample for |
+
+Four things to know before reading the numbers.
+
+**Almost everything here is tagged `MULTIPLIER`, and that tag is narrower than it looks.**
+These are skill rates, not batting averages: a .28 chase rate, a .25 whiff rate, and an .85
+zone-contact rate live on three different scales, and two of the three are bad news for the
+hitter while the third is good. `MULTIPLIER` is the available role meaning "not p_hit-scale,
+do not blend directly", which is the property that matters at the call site. Nothing should
+multiply `p_hit` by one of these until issue #39 settles the mapping. `CALC_30` is the
+category's only `PROBABILITY`, because a location-weighted xBA genuinely is on that scale.
+
+**Zone comes from Statcast's own `zone` column, not from coordinates.** Codes 1-9 are the
+3x3 in-zone grid `CALC_30` asks for and 11-14 the out-of-zone quadrants (there is no 10).
+Reconstructing in-zone from `plate_x` against half the plate width disagreed with the
+published zone on 4.3% of tracked pitches, because the published version accounts for the
+ball's radius and a per-batter zone. `plate_x`, `plate_z`, `sz_top`, and `sz_bot` are
+deliberately absent from the field tuple.
+
+**`CALC_29`'s out rate enumerates outcomes in both directions.** A plate appearance whose
+terminal event is in neither `OUT_EVENTS` nor `ON_BASE_EVENTS` is dropped from numerator and
+denominator, rather than falling through a "not on base means out" complement. Statcast ends
+plate appearances on `truncated_pa` and `caught_stealing_2b`, and a complement rule would
+score every one of those as a pitcher success. That is the same silent-negative shape as the
+`CALC_14` defect in issue #37, which is also why `CALC_29`'s pitcher side reduces to the
+terminal pitch before filtering on the count.
+
+**Two denominators that look wrong and are not.** `CALC_26` is per swing on the hitter's side
+and per pitch on the pitcher's, which is the ROADMAP's definition and the industry
+convention: swinging-strike rate credits a pitcher for provoking the swing at all. And
+`CALC_29`'s two-strike contact rate runs *above* the same hitter's overall contact rate
+(.764 against .694 on the smoke-test hitter) because every foul with two strikes keeps the
+plate appearance alive at two strikes, so a hitter who battles contributes many contacts and
+no whiffs.
+
+### Batter form and quality-of-contact calculators
+
+`category_08_batter_form.py` implements Category 8 (`CALC_52`-`CALC_59`), the first
+**single-sided** category: it asks only how the hitter is going, so nothing about today's
+starter enters. It is also the first real consumer of `common.py`'s `Window` machinery.
+
+| Calculator | Value | Window |
+|---|---|---|
+| `CALC_52` | hits per plate appearance, plus `_MULTI_HIT` (share of games with 2+) | last 3 games |
+| `CALC_53` / `CALC_54` | hits per plate appearance | last 7 / 14 calendar days |
+| `CALC_55` | `_XWOBA` and `_HARD_HIT`, both per batted ball | last 14 days |
+| `CALC_56` | active hit streak, in games (`DELTA`) | walks back from the most recent game |
+| `CALC_57` | actual minus expected hit rate (`DELTA`) | whole pull, or a passed `Window` |
+| `CALC_58` | recent BABIP, plus `_SEASON` baseline and `_DELTA` | last 14 days vs. season |
+| `CALC_59` | sweet-spot rate, launch angle 8 to 32 degrees | last 30 plate appearances |
+
+**Spring training is excluded here, and only here.** A Statcast season pull includes spring
+games: 7.8% of the probe batter's pitches and 10.1% of the probe pitcher's. At season
+aggregate that is noise; across a 3-game or 7-day window in late March it is most of the
+sample. It compounds, because Statcast appears not to compute expected statistics for spring games:
+all 13 spring batted balls in the probe frame carried a null xBA, against 1 of 143 in the
+regular season. That is one batter in one season, enough to justify the filter and not enough
+to characterize Statcast's pipeline. Keeping them puts plate appearances into a denominator whose expected-stat numerator
+silently vanishes. Filtering flipped the probe hitter's `CALC_57` from +0.0043 to -0.0183, a
+sign change. Categories 1 through 4 do not filter; that is a real defect in shipped code and
+is drafted for filing rather than repaired in passing.
+
+**Every calculator takes `today`.** A calculator that reads the clock internally cannot be
+evaluated against a past date, which is precisely what the validation harness in #35 has to
+do. `today` threads to `apply_window`, whose `DAYS(n)` window ends *yesterday*, since today's
+game has not been played.
+
+**`CALC_57`'s two legs share one denominator, and that is the whole calculator.** An xBA
+estimate exists only on batted balls, so a naive mean xBA runs near .41 while a hit rate runs
+near .21; subtracting them yields about -.20 for every hitter alive, which looks like a
+catastrophic slump and is a units error. Both legs here divide by the same plate appearances,
+with a strikeout contributing 0 to both numerators and 1 to the shared denominator. Plate
+appearances whose batted ball carries no xBA are dropped from both, since an unestimated hit
+would manufacture the appearance of good luck.
+
+**`CALC_52` is not the "hit in the last 3 games, Y/N" frequency** the ROADMAP's shorthand
+suggests. That quantity is the model's *output* scale, the left-hand side of
+`1 - (1 - p_hit)^PA_proj`, so feeding it back in as an input would apply the binomial twice.
+The primary is hits per plate appearance; the multi-hit frequency rides along as a secondary.
+
+Two smaller notes. `CALC_52` and `CALC_56` build a game log keyed on `game_pk` rather than
+routing through `apply_window(GAMES(n))`, because that helper dedups by date string and would
+collapse a doubleheader into one game. And role tags follow Category 4's stricter convention:
+`PROBABILITY` is reserved for the three genuine per-plate-appearance hit rates, while
+hard-hit rate, sweet-spot rate, xwOBA, and BABIP are `MULTIPLIER`. Category 1 tags its
+hard-hit rate and xwOBA `PROBABILITY` "for uniformity" with a docstring warning instead; the
+two conventions disagree, and Category 1's puts a .56 hard-hit rate and a .21 hit rate under
+the same tag.
+
+### Pitcher form and fatigue calculators
+
+`category_09_pitcher_form.py` implements Category 9 (`CALC_60`-`CALC_65`), the pitcher-side
+mirror of Category 8 and single-sided for the same reason. It inherits Category 8's
+spring-training filter and `today` parameter, and adds one structural idea of its own:
+**windows are counted in starts**, not days or games. Nothing here routes through
+`apply_window`, which has no start-shaped window and could not easily gain one, because
+identifying a start is a reconstruction rather than a filter.
+
+| Calculator | Value | Window |
+|---|---|---|
+| `CALC_60` | mean Game Score v2 (`DELTA`, points) | last 2 starts |
+| `CALC_61` | `_HITS_PER_9` and `_WHIP` | last 3 starts |
+| `CALC_62` | fastball velocity minus season average (`DELTA`, mph) | last start vs. season |
+| `CALC_63` | walk-rate delta, plus `_ZONE_DELTA` and `_MEATBALL` | last 3 starts vs. season |
+| `CALC_64` | days since the last start (`DELTA`, days) | anchored to `today` |
+| `CALC_65` | hard-hit rate allowed | last 2 starts |
+
+**Two things Statcast does not publish, both reconstructed here.**
+
+*A start.* There is no starter/reliever flag anywhere in the feed. The test used is that the
+pitcher's earliest plate appearance in the game came in inning 1 with zero outs recorded,
+which held for 19 of 19 games in the probe frame. It classifies an opener as a start, which
+is the honest reading, and would misclassify a reliever who entered to begin the first
+inning, which requires the starter to face nobody at all.
+
+*Innings pitched.* The obvious approach, counting outs from plate-appearance `events`,
+**undercounts**: a baserunner retired on a batted ball is an out that the batter's event does
+not name, and that cost one out in 2 of 104 probe half-innings. The rule used instead leans
+on game state. Within a start, every half-inning the pitcher appears in *except his last*
+must have ended with him on the mound, so it contributed exactly `3 - outs_when_up` outs.
+Only the final half-inning is ambiguous and falls back to the event map, so innings pitched
+is exact except possibly there, where it is a lower bound. A lower bound on the denominator
+makes `CALC_61` an upper bound, which is the safer direction for a statistic that flags a
+struggling starter.
+
+**Game Score v2, not Bill James's original.** v1 splits earned from unearned runs and
+Statcast attaches no scoring decision to a run, so it is unreachable. Tom Tango's v2 is
+`40 + 2*outs + K - 2*BB - 2*H - 3*R - 6*HR`, every term of which is available. Calibration is
+left unclaimed: v2 is designed to sit on roughly v1's scale, but this repo has no league
+sample to check that against, since the bulk `pybaseball.statcast()` pull is broken at the
+pinned version (#38).
+
+**Runs allowed carry a known, non-random undercount.** They are measured per half-inning as
+the batting team's score at the end minus its score at the start, across all his pitch rows
+rather than the terminal pitch of each plate appearance, because a run can score on a
+non-terminal pitch (a wild pitch, a balk, a steal of home) and that cost one run in 1 of 19
+probe starts. What no available signal fixes is a run charged to him that scores after he
+leaves, driven home by a reliever. That biases `CALC_60` *upward* on exactly the starts where
+he was pulled with runners aboard, which is to say on his worst ones.
+
+Two smaller notes. `CALC_62` is signed and **negative is the interesting direction**: the
+ROADMAP calls out a loss of 1.5 mph or more as a hit boost, so reading magnitude alone would
+treat a velocity spike as a red flag. And `CALC_64`'s denominator is not a sample size, unlike
+every other `Rate` in the model: rest is a single scalar read off one date, so there is
+nothing to average and nothing to shrink. It is set to 1 to satisfy the shape and must not be
+read as evidence weight.
+
+### Ballpark and environment calculators
+
+`category_05_ballpark_environment.py` implements Category 5 (`CALC_31`-`CALC_40`) and is the
+**first game-level category**. A park factor, an air density, and a wind reading are
+properties of the game, identical for all eighteen hitters in it, so those calculators take an
+environment record rather than a player id. Only `CALC_33`, `CALC_37`, `CALC_38`, and
+`CALC_40` are conditioned on the hitter.
+
+| Calculator | Value | Source |
+|---|---|---|
+| `CALC_31` | park hit factor, 3-year rolling (`MULTIPLIER`) | `park_factors.json` |
+| `CALC_32` | same, split by batter hand (`MULTIPLIER`) | `park_factors.json` |
+| `CALC_33` | feet of fence distance vs. league mean, weighted by spray (`DELTA`) | Statcast + `ballparks.json` |
+| `CALC_34` | degrees off the neutral band, plus `_TIER` (`DELTA`) | boxscore `Weather` |
+| `CALC_35` | density-altitude index (`MULTIPLIER`) | `ballparks.json` + `Weather` |
+| `CALC_36` | assisting wind in mph, projected onto spray (`DELTA`) | boxscore `Wind` + Statcast |
+| `CALC_37` | `_BATTER` / `_PITCHER` hit rate in today's day-or-night condition | `statSplits` |
+| `CALC_38` | `_BATTER` / `_PITCHER` hit rate home or away | `statSplits` |
+| `CALC_39` | closed-roof factor vs. solved open-roof factor (`MULTIPLIER`) | `park_factors.json` |
+| `CALC_40` | hit rate at today's venue | Statcast `home_team` |
+
+**Two checked-in reference tables**, both generated on demand by `scripts/` and loaded through
+`calculators/baselines.py`. `ballparks.json` holds elevation, roof type, and the five
+published fence distances for all 30 venues; `CALC_33` needs a league mean per sector to say
+whether today's park is deep, so evaluating one venue requires all of them. `park_factors.json`
+holds Statcast's park-factor indexes, where 100 is neutral.
+
+The park-factor table is a **scoped exception to the move off scraping**. The Stats API
+publishes no park factors and pybaseball 2.0.0 exposes no park-factor function, so the
+alternative was shipping `CALC_31`, `CALC_32`, and `CALC_39` as permanent `None`. The read
+lives in `scripts/`, which never runs during a daily run or a test; its output is a checked-in
+file, so no code path a run touches carries a scraper. Its window is 3-year rolling and
+includes the in-progress season, so it is a snapshot of a moving quantity: regenerate
+periodically and read `year_range` before trusting it.
+
+**Spray angle is solved, and the sign was validated in both directions first.** Statcast
+publishes `hc_x` / `hc_y` but no angle. A flipped sign turns every pull into an oppo and
+leaves the output entirely plausible, which is the same failure class as `delta_run_exp`'s
+perspective in Category 3. Negative is left field: a right-handed hitter distributed LF 62 /
+CF 42 / RF 34 and an extreme left-handed pull hitter LF 34 / CF 62 / RF 132. Angles outside
+fair territory are dropped rather than clamped, since a ball landing a few feet from the plate
+solves to a wild angle. That drop pattern is also what validates the **origin**: a displaced
+origin would misplace every ball, so deep drives would spill past 45 degrees too. They do not.
+0 of 119 batted balls beyond 300 feet fell outside fair territory, against 13 of 152 under 150
+feet. Error that vanishes as the lever arm grows is landing-point noise, not a bad origin.
+
+Only fly balls and line drives feed the spray distribution. Ground balls never leave the
+infield, and popups reach no fence while being the least reliable coordinate class there is.
+Excluding popups costs 8 to 10 percent of tracked air balls and moves `CALC_33` by at most
+0.73 feet and `CALC_36` by at most 0.15 mph, measured rather than assumed.
+
+**Two traps around the venue string, both real.** `CALC_40` matches the home club's
+abbreviation against Statcast's `home_team`, and the schedule must be requested with
+`hydrate=team` to carry one at all: an unhydrated team object holds only `id`, `name`, and
+`link`. Nor can the abbreviation come from `teams.py`'s crosswalk, which disagrees with
+Statcast on 5 of 30 clubs (`ARI`/`KCR`/`SDP`/`SFG`/`TBR` against Statcast's `AZ`/`KC`/`SD`/
+`SF`/`TB`). Either mistake makes `CALC_40` silently `None`, the second one at exactly five
+parks and nowhere else.
+
+**`CALC_39` solves for the open-roof index instead of dividing by the blend.** Savant
+publishes no working roof-open grouping, but the closed share is exactly its `n_pa` over the
+all-conditions `n_pa`, which makes `A = f*C + (1 - f)*O` invertible. Dividing by `A` directly
+would attenuate the effect, because `A` already contains the closed games: American Family
+Field reads .979 against the blend and .957 against the solved open index. Below a 15 percent
+open share the inversion is abandoned, since half a point of rounding error on an integer
+index becomes 3.3 points there. An open-air park and a fixed dome both return exactly 1.0, by
+definition rather than as an invented neutral.
+
+**`CALC_34` and `CALC_35` report physics, not league constants.** The ROADMAP asks for a
+"temperature modifier" and an "index", but the map from air density to hit probability is a
+league-wide measurement this repo cannot currently make (#38). So they report degrees off
+neutral and a dry-air density ratio, and issue #39 owns the mapping, following `CALC_62`'s
+precedent of reporting a velocity delta in raw mph. Humidity is unavailable from the boxscore
+and is not guessed at; humid air is marginally less dense, so the index slightly understates
+carry on muggy days.
+
+**Weather and wind publish on a later clock than the lineup.** Of 8 Preview-state games
+sampled on 2026-08-09, 2 carried weather and 6 did not, and it did not track start time. So
+`CALC_34`, `CALC_35`, `CALC_36`, and `CALC_39` are fully usable for a backtest over completed
+games and resolve to `None` more often than not at live pick time. When this is wired in it
+needs the `refresh_opposing_pitchers` treatment: `queried_games_cache` freezes the first
+boxscore read for the rest of the day, so a field that publishes later would never be seen.
+
+Two overlaps to resolve before blending: `CALC_32` already contains `CALC_31`, and `CALC_35`
+is computed from `CALC_34`'s temperature. And `CALC_34`, `CALC_35`, and `CALC_39` carry a
+denominator of 1 that is **not** a sample size, the same shape as `CALC_64`'s rest days;
+`CALC_33` and `CALC_36` carry the real tracked air-ball count.
+
+### Lineup and game-context calculators
+
+`category_06_lineup_game_context.py` implements Category 6 (`CALC_41`-`CALC_46`). This is
+where quantities that change **how many plate appearances a hitter gets, and against whom**
+live, which is why it owns the model's only two `EXPONENT` calculators.
+
+`fetch_lineup` carries each player's `lineup_spot`, decoded from the boxscore's 3-digit
+`battingOrder` encoding (`"100"` = spot 1, `"101"` = the first substitute batting there, so
+`int(v) // 100` recovers the spot). `CALC_41` projects plate appearances from it across the
+ROADMAP's 4.6-to-3.7 range, with role `EXPONENT` — it feeds `PA_proj`, never `p_hit`.
+
+| Calculator | Value | Role |
+|---|---|---|
+| `CALC_41` | projected PAs from the batting-order spot | `EXPONENT` |
+| `CALC_42` | preceding hitter's OBP | `MULTIPLIER` |
+| `CALC_43` | on-deck hitter's OPS, plus `_SLG` | `MULTIPLIER` |
+| `CALC_44` | `_PITCHER_TTO1/2/3`, `_BATTER_TTO1/2/3`, `_PENALTY` | `PROBABILITY` / `DELTA` |
+| `CALC_45` | expected PAs lost to a skipped bottom 9th | `EXPONENT` |
+| `CALC_46` | run total vs. league mean | `MULTIPLIER`, always `None` today |
+
+`CALC_42` and `CALC_43` read a *different* hitter's line than the one being evaluated, so
+`fetch_lineup_rates` resolves a whole batting order's season OBP/SLG/OPS in one hydrated
+`/people` request rather than fetching each line twice as its neighbours come up. Both wrap at
+the ends of the order: the hitter before the leadoff man is the ninth hitter.
+
+**Times through the order is reconstructed, and the rule does not transfer between the two
+sides.** Statcast publishes no TTO column and there is no situation code for it either.
+Category 9's start test — earliest plate appearance in inning 1 with nobody out — works on a
+pitcher's frame, which holds every batter he faced. It does **not** work on a batter's frame,
+which holds only plate appearances involving that batter, so a pitcher's earliest row in it is
+the first time he faced *this hitter*, usually the second inning or later. Applying it anyway
+classified 35 of a probe hitter's 261 plate appearances as facing a starter, against a true
+share near 60 percent. The batter side instead takes the starter to be whoever the hitter
+faced in his own first plate appearance of the game, guarded to inning 3 so a pinch hitter
+debuting in the ninth cannot crown a reliever. That guard was measured on bottom-of-order
+regulars rather than on the top-of-order probes, where inning 1 is forced: their first plate
+appearance landed in inning 2 in 19 of 52, 22 of 84, and 0 of 99 games, all admitted, while 6
+and 1 genuine late entries were dropped.
+
+Relief outings are dropped from the pitcher side for a related reason: every plate appearance
+of a relief outing lands in bucket 1, since a reliever rarely faces the same hitter twice, and
+keeping them drags bucket 1 toward bullpen quality. Buckets count repeat encounters with the
+same batter rather than `ceil(index / 9)`; the two agree on 98.9 percent of the probe pitcher's
+440 plate appearances and every disagreement is a substitution.
+
+**The batter leg runs the opposite way from the pitcher leg, and that is a confound rather than
+a finding.** A hitter only reaches bucket 3 when the starter lasted long enough, so batter-side
+rates fall across buckets (.254/.148/.136) while the pitcher side rises (.251/.270/.337, a
++.085 penalty). Read the batter leg as "how this hitter does against a starter who has lasted".
+
+`CALC_45` turns the ROADMAP's conditional "home hitters lose 0.5 PA if leading in the 9th" into
+the unconditional expectation a projection needs, since at pick time nobody knows who will be
+ahead. The skip rate is measured rather than assumed — 780 of 1,761 completed regular-season
+games reaching nine innings, 44.29 percent — and lives in
+`calculators/data/league_game_context.json`. Unlike every other league-reference constant in
+this repo it is a genuine census, from the Stats API schedule rather than the broken bulk
+Statcast pull, so it does not inherit #38. A road hitter returns exactly 0.0: the top of the
+ninth is always played.
+
+`CALC_46` returns `None` in every current code path. Neither a betting market's run total nor
+the league mean of such totals is reachable, and defaulting that mean to a plausible-looking
+8.5 would be the constant-from-nowhere `CALC_34` refused to invent. It ships as a signature so
+the shape is recorded and an odds feed plugs straight in.
+
+**Nothing in `calculators/` is called during a run.** No BvP, handedness, or Statcast request
+is made, `binomial_probability` still computes its exponent as `pa / 5`, and the ranked table
+is unchanged. Calculators are validated in isolation and will be consumed together by the
+composite model (`CALC_75`).
+
+### Defense, umpires and schedule fatigue
+
+`category_10_defense_schedule.py` implements Category 10 (`CALC_66`-`CALC_71`). Three of
+the six work; three ship as signatures over caller-supplied values and return `None` in
+every current code path, the same treatment `CALC_46` gets.
+
+| Calculator | Value | Role | Reachable? |
+|---|---|---|---|
+| `CALC_66` | opposing infield Outs Above Average | `DELTA` | no — see #46 |
+| `CALC_67` | opposing outfield Outs Above Average | `DELTA` | no — see #46 |
+| `CALC_68` | umpire zone size vs. league mean | `MULTIPLIER` | no — see #38, #46 |
+| `CALC_69` | day-after-night indicator, plus `_TURNAROUND_HOURS` | `DELTA` | yes |
+| `CALC_70` | miles travelled, plus `_TZ_SHIFT` and `_DAYS_REST` | `DELTA` | yes |
+| `CALC_71` | never-faced indicator | `DELTA` | yes |
+
+pybaseball 2.0.0 exposes no fielding-leaderboard function and the Stats API publishes no
+OAA, so `CALC_66`/`CALC_67` have nowhere to read from. `CALC_68` is worse: Statcast carries
+no umpire column at all, so a per-umpire zone index needs a league-wide join through
+`game_pk`, and its league mean is a mean of a quantity that cannot yet be computed. The
+umpire's **identity** is the reachable half — it rides the boxscore request `fetch_lineup`
+already makes, and `fetch_home_plate_umpire` returns it today.
+
+**`CALC_71` is the only calculator in the model whose value *is* the empty sample.** A null
+career line means "these two have never met", indicator 1.0 — everywhere else a null line
+means "no evidence" and returns `None`. That made it uniquely sensitive to a dropped
+request, because `empty_bvp()` produces the identical null line on a network failure, and
+those are opposite answers rather than both "no sample". `parse_bvp_stats` now emits
+`resolved`, true only when the response carried a recognized stat group, and `CALC_71`
+returns `None` without it.
+
+**The previous game is ordered by `(date, game number)`, not by date.** On a doubleheader
+date "what was the previous game" has two answers, and game two's is game one: zero travel
+and a turnaround measured in hours, which is exactly the fatigue signal.
+
+**`CALC_70`'s time-zone shift comes from each venue's IANA zone at its own game date, never
+from the table's stored offset.** That stored value is a generation-time snapshot — Oracle
+Park reads `-7` in July and is `-8` in January. Arizona is what makes it matter: Chase
+Field does not observe daylight saving, so a July San Francisco to Phoenix trip crosses no
+time zones while an April one crosses one.
+
+The haversine was validated against a real leg first: Wrigley Field to Yankee Stadium
+solves to 715.1 miles against roughly 713 independently, and the 2026-08-02/03 pair
+reproduces the category end to end — a Wrigley day game after a Wrigley night game gives
+the indicator with 0 miles, then Chicago to New York gives 715.1 miles, +1 hour eastward
+and no off day.
+
+`CALC_69`'s second key is **start-to-start**, not rest: neither the schedule nor Statcast
+publishes when a game ended, so a 10:30pm finish before a 1:05pm start is 14.5 hours here
+and nearer 11 of real turnaround.
+
+### Opposing bullpen exposure
+
+`category_07_bullpen_exposure.py` implements Category 7 (`CALC_47`-`CALC_51`). All five
+work. The category had been carried as blocked on a roster and usage feed this project
+does not have, and both halves of that turned out to be wrong.
+
+| Calculator | Value | Role | Keys |
+|---|---|---|---|
+| `CALC_47` | bullpen hits allowed per batter faced | `PROBABILITY` | plus `_BA` |
+| `CALC_48` | leverage-core pitches thrown, last 3 days | `DELTA` | plus `_7D`, `_AVAILABLE` |
+| `CALC_49` | share of relief work from the hitter's bad side | `MULTIPLIER` | plus `_LHP` |
+| `CALC_50` | balls in play per batter faced | `MULTIPLIER` | plus `_WHIFF` |
+| `CALC_51` | opener indicator | `DELTA` | plus `_BF_PER_START` |
+
+**A whole bullpen costs two requests.** `GET /teams/{id}/roster?rosterType=active&date=`
+exists and honours `date`, which was checked at two in-season dates rather than one:
+a silently ignored `date` would return today's roster always, and every calculator here
+would be unbacktestable against a past slate, which is the only thing #35 would want them
+for. Team 147 returned 13 pitchers in April and 13 in August, sharing 10. The second
+request is a batched `GET /people?personIds=...&hydrate=stats(group=[pitching],
+type=[gameLog])` covering the whole staff.
+
+**The starter/reliever split needs no Statcast.** Every game-log line carries
+`gamesStarted`, so a pitcher's relief work is exactly his lines with `gamesStarted == 0`.
+
+**`CALC_47` and `CALC_50` aggregate over relief appearances, not over pitchers**, and that
+inverts the cost of a membership mistake. Per pitcher, admitting a starter is expensive:
+his two hundred starting batters faced swamp the sample and drag the rate toward rotation
+quality, which is the thing the category exists to measure separately. Per appearance it is
+nearly free, because a rotation arm has almost no relief lines to contribute, while
+dropping a genuine reliever still costs his whole sample. So the threshold errs inclusive,
+which is the opposite of the instinct.
+
+Both boundaries are measured, over 129 active pitchers and 889 starts on ten clubs:
+
+- **Relief share of batters faced, 0.5.** The distribution is not the clean bimodal split
+  a one-team sample suggests: 57 pitchers sit at exactly 1.0 and 40 at exactly 0.0, but 32
+  are in between. What recommends 0.5 is where the straddling cases land. Just below are
+  Miles Mikolas (.497) and Brayan Bello (.495), rotation arms taking piggyback work; just
+  above are Matt Waldron (.552) and Chad Patrick (.660), bullpen arms who spot start.
+  Share of *batters faced* rather than of games, because one start is worth four relief
+  outings in workload and a games-based share calls a piggyback starter a reliever.
+- **Mean batters faced per start, 12.** Of 889 competitive starts, 786 ran to 18 or more.
+  Per pitcher with at least three starts, the mean-per-start values run 4.7, 5.7, 6.0, 6.5,
+  9.2 and then jump to 16.0, so the boundary sits in the observed gap rather than at a
+  round number near it. A conventional starter's shortest single outing in the sample was
+  13.
+
+**`CALC_51` is a prediction from history, not an observation.** Nothing published before
+first pitch says "opener"; what is available is that this pitcher's previous starts were
+short. A first-time opener therefore reads 0.0, and a pitcher on a strict return-from-injury
+pitch limit reads 1.0 without being an opener. Category 9 makes the same trade in the other
+direction, and the framing is the same: report the measurable thing under a name that says
+what was measured. `CALC_51` also inherits #44, since the probable starter publishes on a
+later clock than the lineup and changes on a scratch.
+
+`starter_record` picks today's announced starter out of the roster pull rather than
+fetching him again, so `attach_category_07` still costs two requests while returning both
+arguments the aggregate needs. It exists because that join is `CALC_51`'s only real input
+path, and a helper the caller has to write themselves never gets exercised. Verified end to
+end on the 2026-08-09 slate: the Nationals' announced probable resolved out of the roster
+pull and read as an opener at 11.0 batters faced across his two starts.
+
+**A rested bullpen reads 0.0, not `None`.** An empty recency window normally means "no
+evidence" and `apply_window` returns `None` to say so. For `CALC_48` an empty window means
+the reliever demonstrably did not pitch, which is a real reading of zero load and the whole
+point of the calculator, so the coercion to `[]` is deliberate. Two appearances on one date
+both count, which is what makes it right on a doubleheader.
+
+**`CALC_50`'s whiff key is the one thing the Stats API does not publish.** Checked directly:
+`stats=pitchArsenal` carries usage and velocity, `stats=expectedStatistics` carries outcome
+estimates, neither carries swings or misses. A real whiff rate needs Statcast at one call
+per reliever, seven calls against the two the rest of the category needs, for one key. It is
+therefore an optional argument on the `CALC_05`-`CALC_08` precedent: the in-play rate always
+resolves and whiff is opportunistic. The two keys are not strictly over the same population,
+since the pitch records carry no start flag.
+
+`CALC_49` weights by relief batters faced rather than counting heads, because a left-hander
+with four appearances and one with sixty are not the same exposure. **A switch hitter is
+never at a platoon disadvantage**, so his `CALC_49` is 0.0 with the full sample behind it
+rather than `None`: against a bullpen he picks his side after each arm is announced. The
+ROADMAP scopes the mix to the sixth through ninth innings and this does not, because the
+game log is one row per appearance and carries no inning.
+
+The category filters spring training through `common.is_competitive`, which the game log
+supports for free because every split carries `gameType`. That is the filter #42 is open
+about Categories 1 through 4 missing.
+
+Every value was independently reproduced from raw API JSON before the module was trusted.
+
+### Excluding openers
+
+This tool ranks scheduled hitters against **traditional starting pitchers**. An opener's
+start is a different matchup than the one being modelled, so `--exclude-openers` drops
+those hitters and is **on by default**. Pass `--no-exclude-openers` to rank every posted
+hitter.
+
+```bash
+python3 main.py                        # openers excluded (default)
+python3 main.py --no-exclude-openers   # rank everyone
+```
+
+Three decisions, none of them forced:
+
+- **Per side, not per game.** A club using an opener does not stop the other club from
+  starting a conventional pitcher, so dropping the whole game would discard nine hitters
+  facing exactly what this tool is about. The filter keys on each hitter's
+  `opposing_pitcher_id`.
+- **A hitter whose opposing starter is unannounced is kept.** No probable is weak evidence
+  *for* an opener, so the other reading is defensible, but dropping a playable matchup over
+  a missing field is the worse failure, and the field was populated on 60 of 60 sides
+  across the two slates probed.
+- **The gate carries its own rule rather than calling `CALC_51`.** The calculator returns
+  `None` for a pitcher who has never started, which is right as a measurement and wrong as
+  a decision: a reliever announced as today's starter is the clearest opener there is.
+  `is_opener` adds that case through `relief_share`.
+
+The gate runs after the lineup loop and never inside `queried_games_cache`, so it inherits
+`refresh_opposing_pitchers`. A game dropped at 14:00 for an announced opener comes back at
+14:15 if he is scratched. It costs one batched request per run covering every probable
+starter on the slate.
+
+Verified on the 2026-08-09 slate: 2 of 30 announced starters flagged, Erik Miller (41
+appearances, 1 start of 5 batters, .968 relief share) and Brad Lord (11.0 batters per
+start, .916), dropping 18 of 270 hitters and leaving the other side of both games intact.
+
+**Bullpens are disregarded.** Category 7's `CALC_47`, `CALC_48`, `CALC_49` and `CALC_50`
+measure a bullpen and are out of scope for the composite model; the modules remain so a
+later decision can use them. `CALC_51` was promoted out of the category into this gate.
+
+### The composite model
+
+`category_11_composite.py` implements Category 11 (`CALC_72`-`CALC_76`), the end of the
+pipeline, and **completes the ROADMAP at 76 of 76**.
+
+```
+CALC_72  season base rate      \
+CALC_73  14-day weighted rate   >--  CALC_75 posterior  -->  CALC_76 P(>=1 hit)
+CALC_74  matchup-conditioned   /
+```
+
+| Calculator | Value | Role |
+|---|---|---|
+| `CALC_72` | season hits per plate appearance | `PROBABILITY` |
+| `CALC_73` | recency-weighted 14-day hit rate | `PROBABILITY` |
+| `CALC_74` | hit rate conditioned on BvP, platoon and pitch type | `PROBABILITY` |
+| `CALC_75` | Beta-Binomial posterior blending the three | `PROBABILITY` |
+| `CALC_76` | `1 - (1 - p_hit) ** PA_proj` | `PROBABILITY` |
+
+**This category was carried as blocked on #34 and #39, and needed neither resolved.** The
+distinction that unblocked it: a number that comes from the data can be computed, and a
+number that comes from nowhere has to be a parameter. Every `Rate` in the model carries its
+own denominator, so the sample-size weighting across `CALC_72`, `CALC_73` and `CALC_74` is
+derived rather than invented. The one quantity that is not in the data is how far to trust
+the prior, so `prior_strength` is a parameter, defaulting to the season sample's own size,
+which makes `CALC_75` a plain precision-weighted mean until #34 rules.
+
+**`CALC_75` uses the hitter's own season rate as the prior, not a league mean.** The
+textbook formulation wants a league rate, which does not exist in this repo while #38
+blocks the league-wide pull, and inventing one is what `CALC_34` refused to do. The
+hitter's own line costs the between-player pooling a league prior would give, and degrades
+gracefully: a thin season line is a weak prior automatically, which is the behaviour
+shrinkage is for.
+
+**#39 stays open and stays irrelevant here**, because every input the module accepts is
+already a `p_hit`-scale rate. It takes no `MULTIPLIER` and no `DELTA`; the mapping #39 owes
+is for values that are not on this scale, and none are used.
+
+Two overlaps are recorded rather than silently blended:
+
+- `CALC_73` is `CALC_54`'s window with an exponential decay applied, and converges on it
+  exactly as the half-life grows. A composite should read one or the other, never both.
+  Same shape as `CALC_31` inside `CALC_32`.
+- **`CALC_76` is the one `PROBABILITY` in the model that must never re-enter `p_hit`.** It
+  is a per-game probability, not a per-plate-appearance rate, and blending it back in
+  applies the binomial twice. `CALC_52` documents the same trap from the other end.
+
+`PA_proj` is composed from Category 6's two `EXPONENT` keys, `CALC_41` plus the signed
+`CALC_45`, rather than reaching for `main.py`'s `pa / 5`, which is a different quantity
+entirely.
+
+Verified live against a real hitter's 1,227 pitch records: `CALC_72` (53 hits in 261 plate
+appearances), `CALC_73` (.16343 over 52, against .15385 unweighted, so the decay is doing
+real work rather than rounding) and `CALC_75` each reproduced independently from raw
+records.
+
+**The ranked table still comes from `binomial_probability`.** Switching it to `CALC_76` is
+a one-line change and a deliberate decision with no validation behind it yet, which is #35.
+
+### The Model column
+
+The table carries a `Model` column beside `Prob %`. They are two different answers to the
+same question, and showing both is the point.
+
+- **`Prob %`** is the shipped heuristic: a five-game batting average put through the
+  binomial with a `pa / 5` exponent.
+- **`Model`** pools **27 calculators**, every shipped key reporting hits per plate
+  appearance, weighted by sample size, then puts the result through `CALC_76` with the
+  Category 6 plate-appearance projection.
+
+**The ranking is still `Prob %`.** Neither number has been validated against outcomes
+(#35), so `Model` is reported beside the heuristic rather than replacing it.
+
+- **`Delta`** is `Model` minus `Prob %`, in percentage points. Signed, because the two
+  methods disagreeing by 20 points in opposite directions are different findings.
+
+```
++-----------------+------+------+------+--------+-------+-------+
+|      Player     | Team | H-AB | BB/K | Prob % | Model | Delta |
++-----------------+------+------+------+--------+-------+-------+
+|   Jake Mangum   | PIT  | 6-19 | 2/4  | 79.7%  | 73.0% |  -6.7 |
+|  Ernie Clement  | TOR  | 6-23 | 0/5  | 75.1%  | 67.2% |  -7.9 |
+| Randy Arozarena | SEA  | 3-19 | 1/3  | 49.7%  | 64.5% | +14.8 |
+|   Bryce Harper  | PHI  | 5-17 | 8/4  | 82.5%  | 64.3% | -18.1 |
+|   Ketel Marte   | ARI  | 2-17 | 4/5  | 40.9%  | 62.4% | +21.5 |
+| Freddie Freeman | LAD  | 3-18 | 1/1  | 50.0%  | 72.4% | +22.4 |
++-----------------+------+------+------+--------+-------+-------+
+```
+
+**`Prob %` is the primary sort, descending**, so the highest probabilities are at the top
+and the lowest at the bottom. `Delta` is the secondary key, **signed and ascending**, which
+puts the two required endpoints in place: the top row is the highest probability and, among
+hitters the heuristic rates equally, the lowest delta; the bottom row is the lowest
+probability and, among equals, the highest positive delta.
+
+Signed rather than absolute, because an absolute key collapses a model that disagrees
+upward with one that disagrees downward, and those belong at opposite ends.
+
+**The delta breaks ties; it does not re-rank.** Two hitters with different `Prob %` are
+ordered by `Prob %` alone however much the model disagrees. Ties are not rare, since
+`Prob %` is a function of a five-game line and any two hitters sharing hits, at bats and
+walks collide exactly, but on a slate of distinct lines the delta key is inert. Giving it
+enough weight to reorder unequal probabilities needs a weighting nobody has measured, which
+is #35 and #52.
+
+A hitter the model could not evaluate has **no** delta rather than a zero one, and sorts
+after resolved rows at the same probability.
+
+**The two methods reorder, not just differ.** On that real slate Freeman is fourth on the
+heuristic and second on the model; Harper is first and fifth. The heuristic spans 41.6
+points and the model 10.6, which is what a 17-plate-appearance sample versus a
+several-thousand one should look like. A dash means the model did not resolve, which is a
+different statement from a low probability.
+
+Membership in the aggregate is an **explicit list**, not a filter on the `PROBABILITY` role
+tag, because the tag does not mean what its name suggests. Category 1 tags a hard-hit rate
+and a whiff rate `PROBABILITY` "for uniformity", and `CALC_06`'s xwOBA runs to roughly 2.0.
+Every rejection is recorded in `calculators/category_11_composite.py` with its reason. The
+subtle group is `CALC_16`/`17`/`18`/`30`: they look like batting averages and sit in a
+plausible .27 to .39 range, but their denominator is **batted balls** rather than plate
+appearances, so pooling them raises the aggregate by roughly the contact rate. `CALC_14` is
+excluded for a different reason, correctness, per #37.
+
+Two properties of the aggregate are documented rather than fixed, because fixing them needs
+a backtest to score the options:
+
+- **It over-weights the season baseline.** `CALC_09`, `CALC_11`, `CALC_37`, `CALC_38`, the
+  `CALC_44` buckets and `CALC_72` are largely the same season data sliced differently, and
+  precision weighting treats them as independent evidence. 13 of the 27 members are in that
+  family. Tracked as #51.
+- **It pools hits-per-PA with hits-allowed-per-PA.** A .270 hitter facing a .190-allowed
+  starter lands between the two, which is roughly what a matchup estimate should do. That
+  is a modelling choice, not an identity.
+
+**Cost.** `--model` / `--no-model` defaults to **on for a manual run and off with
+`--scheduled`**. A hitter whose Statcast frame is already cached for today evaluates in
+about 1.9 seconds; one who is not costs roughly 78 seconds, and a full slate is 50 hitters
+plus up to 30 starters. That does not fit a 15-minute cron. #50 tracks making it affordable
+there.
+
+`calculators/pipeline.py` is the single place that turns a hitter-game into all 108
+calculator keys. `main.py` and `scripts/evaluate_sample_coverage.py` both use it, so a
+coverage measurement is taken against the same assembly that ships.
+
+### Measuring coverage
+
+`scripts/evaluate_sample_coverage.py` runs every calculator against a day's posted lineups
+for the `ROADMAP.md` sample batters and reports how many keys resolve.
+
+```bash
+PYTHONPATH=. python3 scripts/evaluate_sample_coverage.py --date 2026-08-09
+```
+
+On the 2026-08-09 slate, 10 of the 13 sample batters were posted, and of 1,080 keys
+evaluated: **90.4% usable**, 5.9% empty sample, 3.7% structural, **0% missing input**.
+Excluding the four known-blocked calculators, 93.8%.
+
+Every `None` is classified, and the three buckets are not the same finding. *Structural*
+means no reachable source exists. *Empty* means the input arrived with nothing in it, which
+is real coverage information. *Missing* means the harness did not supply the argument, which
+is a defect in the script. That last bucket earned its keep three times while the script was
+being written, each of which would otherwise have been reported as an empty sample.
+
+**This measures coverage, not quality.** A calculator that resolves for every hitter may
+carry no predictive signal at all.
+
 ### Output format
 
 ```
@@ -172,8 +1099,13 @@ P   = 1 − (1 − avg)^exp
 ## Running tests
 
 ```bash
-pytest test_suite.py -v
+uv run pytest tests/ -v
 ```
+
+The suite is offline by design and never reaches a live API: every fetcher is monkeypatched
+and every payload is a fixture. An autouse guard in `tests/conftest.py` enforces this by
+blocking non-loopback socket connections, so a test that forgets to patch a fetcher fails
+loudly instead of quietly scraping Baseball Savant on every run.
 
 ---
 
@@ -185,7 +1117,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Contributing
 
-Contributions are welcome. Please update `test_suite.py` as appropriate when adding features.
+Contributions are welcome. Please update the appropriate module under `tests/` when adding features.
 
 ## License
 
