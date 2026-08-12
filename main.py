@@ -171,9 +171,15 @@ def fetch_schedule(date: str) -> list[dict]:
     """Return per-game records for all non-postponed games on *date* (YYYY-MM-DD).
 
     Each record: {gamePk, gameNumber, home_team_id, away_team_id, start_dt,
-    home_pitcher_id, away_pitcher_id}. Both games of a doubleheader appear as
-    distinct entries. Probable pitcher ids are None until the team announces a
-    starter, and stay None for an opener the API does not list.
+    abstract_state, home_pitcher_id, away_pitcher_id}. Both games of a
+    doubleheader appear as distinct entries. Probable pitcher ids are None until
+    the team announces a starter, and stay None for an opener the API does not
+    list.
+
+    `abstract_state` is the schedule's `abstractGameState`: "Preview" until first
+    pitch, then "Live", then "Final". It is what `select_games` uses to decide
+    whether a game has begun, since a scheduled start time is a plan and a status
+    is an observation.
     """
     try:
         resp = requests.get(
@@ -201,6 +207,7 @@ def fetch_schedule(date: str) -> list[dict]:
                 "home_team_id": game["teams"]["home"]["team"]["id"],
                 "away_team_id": game["teams"]["away"]["team"]["id"],
                 "start_dt": start_dt,
+                "abstract_state": game.get("status", {}).get("abstractGameState"),
                 "home_pitcher_id": probable_pitcher_id(game, "home"),
                 "away_pitcher_id": probable_pitcher_id(game, "away"),
             }
@@ -270,18 +277,42 @@ def fetch_lineup(game_pk: int) -> dict[str, list[dict]]:
     return result
 
 
+def has_started(game: dict, now: datetime) -> bool:
+    """Whether *game* has already begun, and its hitters are therefore ineligible.
+
+    A pick can only be made on a game that has not started, so this is the
+    eligibility test, not a convenience filter.
+
+    The schedule's `abstract_state` is authoritative when present, because a
+    start time is a plan and a status is an observation, and the two disagree in
+    both directions: a rain-delayed game sits at "Preview" well past its
+    scheduled first pitch and its hitters are still perfectly eligible, while a
+    resumed suspended game reports "Live" against a start time that may read as
+    future. Falling back to the clock only when the field is absent keeps records
+    that predate the field behaving exactly as they did.
+    """
+    state = game.get("abstract_state")
+    if state is not None:
+        return state != "Preview"
+    return game["start_dt"] < now
+
+
 def select_games(
     games: list[dict], now: datetime, scheduled: bool = False
 ) -> list[dict]:
     """Filter *games* to those relevant for this run.
 
-    Manual mode (scheduled=False): games with start_dt >= now.
-    Scheduled mode (scheduled=True): games where 0 < start_dt - now <= 2 hours.
+    Both modes drop any game that has already begun (see `has_started`).
+
+    Manual mode (scheduled=False): every game still to start.
+    Scheduled mode (scheduled=True): games where 0 < start_dt - now <= 2 hours,
+    sized for the cron cadence.
     """
+    upcoming = [g for g in games if not has_started(g, now)]
     if scheduled:
         window = timedelta(hours=2)
-        return [g for g in games if timedelta(0) < g["start_dt"] - now <= window]
-    return [g for g in games if g["start_dt"] >= now]
+        return [g for g in upcoming if timedelta(0) < g["start_dt"] - now <= window]
+    return upcoming
 
 
 def is_opener(games: list[dict]) -> bool:

@@ -24,6 +24,7 @@ from main import (
     fetch_schedule,
     fetch_lineup,
     select_games,
+    has_started,
     log_schedule_fetch_error,
     probable_hitters,
     group_picks_by_start_time,
@@ -289,6 +290,26 @@ def test_fetch_schedule_single_game(monkeypatch):
     assert r["start_dt"].hour == 19
 
 
+def test_fetch_schedule_carries_the_abstract_game_state(monkeypatch):
+    """`select_games` decides eligibility from this field, so it has to survive."""
+    game = _make_game(home_id=119, away_id=137, state="Pre-Game")
+    game["status"]["abstractGameState"] = "Preview"
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse(_schedule_payload([game]))
+    )
+    assert fetch_schedule("2026-07-18")[0]["abstract_state"] == "Preview"
+
+
+def test_fetch_schedule_abstract_state_is_none_when_absent(monkeypatch):
+    """An absent field must read as None, which is what routes `has_started`
+    back to the clock instead of treating the game as started."""
+    game = _make_game(home_id=119, away_id=137)
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: FakeResponse(_schedule_payload([game]))
+    )
+    assert fetch_schedule("2026-07-18")[0]["abstract_state"] is None
+
+
 def test_fetch_schedule_doubleheader_returns_both_games(monkeypatch):
     game1 = _make_game(home_id=119, away_id=137, game_pk=700001, game_number=1, hour=17)
     game2 = _make_game(home_id=119, away_id=137, game_pk=700002, game_number=2, hour=20)
@@ -536,6 +557,57 @@ def test_select_games_filters_multiple_games():
 
     scheduled = select_games(games, _NOW, scheduled=True)
     assert len(scheduled) == 2  # 60 min and 90 min only; -60 and 200 excluded
+
+
+# ---- has_started ----
+
+
+def _stated(offset_minutes: float, state: str | None) -> dict:
+    game = _gr(offset_minutes)
+    game["abstract_state"] = state
+    return game
+
+
+@pytest.mark.parametrize(
+    "state, expected_started",
+    [
+        ("Preview", False),
+        ("Live", True),
+        ("Final", True),
+    ],
+    ids=["preview", "live", "final"],
+)
+def test_has_started_reads_the_state_not_the_clock(state, expected_started):
+    """A future start time does not make a Live game unstarted, and vice versa."""
+    assert has_started(_stated(120, state), _NOW) is expected_started
+
+
+def test_has_started_keeps_a_delayed_game_eligible():
+    """Still "Preview" an hour past its scheduled first pitch: a rain delay.
+
+    Its hitters have not batted, so they remain pickable. The clock alone would
+    have thrown them out.
+    """
+    assert has_started(_stated(-60, "Preview"), _NOW) is False
+
+
+def test_has_started_falls_back_to_the_clock_without_a_state():
+    assert has_started(_gr(-1), _NOW) is True
+    assert has_started(_gr(0), _NOW) is False
+
+
+def test_select_games_excludes_games_already_underway():
+    """The live slate shape: some finals, some in progress, some yet to start."""
+    final = _stated(-240, "Final")
+    live = _stated(-30, "Live")
+    delayed = _stated(-15, "Preview")
+    upcoming = _stated(60, "Preview")
+
+    manual = select_games([final, live, delayed, upcoming], _NOW, scheduled=False)
+    assert manual == [delayed, upcoming]
+
+    scheduled = select_games([final, live, delayed, upcoming], _NOW, scheduled=True)
+    assert scheduled == [upcoming]  # `delayed` is eligible but outside the window
 
 
 # ---- build_arg_parser ----
