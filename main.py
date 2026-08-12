@@ -66,6 +66,23 @@ DEFAULT_COOLDOWN_DAYS = 7
 # over after every venue in the country has finished the day's games.
 SLATE_TIMEZONE = ZoneInfo("America/New_York")
 
+# `codedGameState` values, enumerated in both directions rather than one set plus
+# a complement, so an unrecognized code is visibly unhandled instead of silently
+# sorted into whichever bucket the rule defaults to.
+#
+# `abstractGameState` is NOT usable for this and the difference is not academic:
+# it reports "Live" from the moment warmups begin, well before first pitch.
+# Measured on the 2026-08-12 slate, a game 19 minutes from its scheduled start
+# with no pitch thrown, zero outs and zero runs read `abstractGameState: Live`,
+# `codedGameState: P`, `detailedState: Warmup`. Filtering on the abstract value
+# discarded a full lineup of hitters who were entirely eligible, and it did it in
+# the last half hour before first pitch, which is exactly the window the
+# scheduled run exists to cover.
+PREGAME_GAME_CODES = frozenset({"S", "P"})  # Scheduled, Pre-Game (incl. Warmup)
+STARTED_GAME_CODES = frozenset(
+    {"I", "F", "O", "U"}
+)  # In Progress, Final, Over, Suspended
+
 
 def env_setting(name: str) -> str:
     """Return environment variable *name* with surrounding whitespace removed.
@@ -229,15 +246,15 @@ def fetch_schedule(date: str) -> list[dict]:
     """Return per-game records for all non-postponed games on *date* (YYYY-MM-DD).
 
     Each record: {gamePk, gameNumber, home_team_id, away_team_id, start_dt,
-    abstract_state, home_pitcher_id, away_pitcher_id}. Both games of a
+    coded_state, home_pitcher_id, away_pitcher_id}. Both games of a
     doubleheader appear as distinct entries. Probable pitcher ids are None until
     the team announces a starter, and stay None for an opener the API does not
     list.
 
-    `abstract_state` is the schedule's `abstractGameState`: "Preview" until first
-    pitch, then "Live", then "Final". It is what `select_games` uses to decide
-    whether a game has begun, since a scheduled start time is a plan and a status
-    is an observation.
+    `coded_state` is the schedule's `codedGameState`, which `select_games` uses
+    to decide whether a game has begun, since a scheduled start time is a plan
+    and a status is an observation. Deliberately not `abstractGameState`: that
+    one reads "Live" through warmups, before a pitch is thrown.
     """
     try:
         resp = requests.get(
@@ -265,7 +282,7 @@ def fetch_schedule(date: str) -> list[dict]:
                 "home_team_id": game["teams"]["home"]["team"]["id"],
                 "away_team_id": game["teams"]["away"]["team"]["id"],
                 "start_dt": start_dt,
-                "abstract_state": game.get("status", {}).get("abstractGameState"),
+                "coded_state": game.get("status", {}).get("codedGameState"),
                 "home_pitcher_id": probable_pitcher_id(game, "home"),
                 "away_pitcher_id": probable_pitcher_id(game, "away"),
             }
@@ -341,17 +358,23 @@ def has_started(game: dict, now: datetime) -> bool:
     A pick can only be made on a game that has not started, so this is the
     eligibility test, not a convenience filter.
 
-    The schedule's `abstract_state` is authoritative when present, because a
-    start time is a plan and a status is an observation, and the two disagree in
-    both directions: a rain-delayed game sits at "Preview" well past its
-    scheduled first pitch and its hitters are still perfectly eligible, while a
-    resumed suspended game reports "Live" against a start time that may read as
-    future. Falling back to the clock only when the field is absent keeps records
-    that predate the field behaving exactly as they did.
+    The schedule's `coded_state` is authoritative when it is one of the codes
+    enumerated above, because a start time is a plan and a status is an
+    observation, and the two disagree in both directions: a rain-delayed game
+    sits in pre-game well past its scheduled first pitch and its hitters are
+    still perfectly eligible, while a resumed suspended game reports in-progress
+    against a start time that may read as future.
+
+    An absent or unrecognized code falls back to the clock rather than guessing.
+    That keeps records predating the field behaving as they did, and it means a
+    code this list has never seen degrades to the old behavior instead of
+    silently deciding every game one way.
     """
-    state = game.get("abstract_state")
-    if state is not None:
-        return state != "Preview"
+    state = game.get("coded_state")
+    if state in PREGAME_GAME_CODES:
+        return False
+    if state in STARTED_GAME_CODES:
+        return True
     return game["start_dt"] < now
 
 

@@ -26,11 +26,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 - **Games already underway were filtered by their scheduled start time rather than their
   actual state**, so eligibility rested on a plan instead of an observation. `fetch_schedule`
-  now carries the schedule's `abstractGameState` and the new `main.has_started` reads it:
-  "Preview" means not yet begun, anything else means begun. This drops a resumed suspended
-  game whose start time still reads as future, and keeps a rain-delayed game whose hitters
-  have not batted and remain perfectly pickable. Records without the field fall back to the
-  clock, so nothing that predates it changes behavior.
+  now carries the schedule's `codedGameState` and the new `main.has_started` reads it. This
+  drops a resumed suspended game whose start time still reads as future, and keeps a
+  rain-delayed game whose hitters have not batted and remain perfectly pickable. An absent or
+  unrecognized code falls back to the clock, so nothing that predates the field changes.
+  **`abstractGameState` is not usable for this**, which cost a live run to learn: it reads
+  "Live" from the moment warmups begin. A game 19 minutes from its scheduled start with no
+  pitch thrown, zero outs and zero runs reported `abstractGameState: Live`,
+  `codedGameState: P`, `detailedState: Warmup`. The first version of this filter therefore
+  discarded a full lineup of eligible hitters, in the last half hour before first pitch,
+  which is exactly the window the scheduled run exists to cover. The codes are enumerated in
+  both directions rather than one set plus a complement.
 - **The slate date came from the host clock, so the after-midnight cron firings asked for the
   wrong day** (#49). The MLB `date` parameter selects on `officialDate`, which is venue-local:
   a game starting 01:50 UTC in Seattle belongs to the previous calendar day. The runner is

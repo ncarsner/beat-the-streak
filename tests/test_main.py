@@ -291,24 +291,24 @@ def test_fetch_schedule_single_game(monkeypatch):
     assert r["start_dt"].hour == 19
 
 
-def test_fetch_schedule_carries_the_abstract_game_state(monkeypatch):
+def test_fetch_schedule_carries_the_coded_game_state(monkeypatch):
     """`select_games` decides eligibility from this field, so it has to survive."""
-    game = _make_game(home_id=119, away_id=137, state="Pre-Game")
-    game["status"]["abstractGameState"] = "Preview"
+    game = _make_game(home_id=119, away_id=137, state="Warmup")
+    game["status"]["codedGameState"] = "P"
     monkeypatch.setattr(
         requests, "get", lambda *a, **kw: FakeResponse(_schedule_payload([game]))
     )
-    assert fetch_schedule("2026-07-18")[0]["abstract_state"] == "Preview"
+    assert fetch_schedule("2026-07-18")[0]["coded_state"] == "P"
 
 
-def test_fetch_schedule_abstract_state_is_none_when_absent(monkeypatch):
+def test_fetch_schedule_coded_state_is_none_when_absent(monkeypatch):
     """An absent field must read as None, which is what routes `has_started`
     back to the clock instead of treating the game as started."""
     game = _make_game(home_id=119, away_id=137)
     monkeypatch.setattr(
         requests, "get", lambda *a, **kw: FakeResponse(_schedule_payload([game]))
     )
-    assert fetch_schedule("2026-07-18")[0]["abstract_state"] is None
+    assert fetch_schedule("2026-07-18")[0]["coded_state"] is None
 
 
 def test_fetch_schedule_doubleheader_returns_both_games(monkeypatch):
@@ -641,31 +641,46 @@ def test_slate_date_converts_rather_than_relabels():
 
 def _stated(offset_minutes: float, state: str | None) -> dict:
     game = _gr(offset_minutes)
-    game["abstract_state"] = state
+    game["coded_state"] = state
     return game
 
 
 @pytest.mark.parametrize(
     "state, expected_started",
     [
-        ("Preview", False),
-        ("Live", True),
-        ("Final", True),
+        ("S", False),  # Scheduled
+        ("P", False),  # Pre-Game, and Warmup shares this code
+        ("I", True),  # In Progress
+        ("F", True),  # Final
+        ("O", True),  # Game Over
+        ("U", True),  # Suspended: it began
     ],
-    ids=["preview", "live", "final"],
+    ids=["scheduled", "pregame", "in-progress", "final", "over", "suspended"],
 )
 def test_has_started_reads_the_state_not_the_clock(state, expected_started):
-    """A future start time does not make a Live game unstarted, and vice versa."""
+    """A future start time does not make an in-progress game unstarted."""
     assert has_started(_stated(120, state), _NOW) is expected_started
 
 
+def test_has_started_keeps_a_warming_up_game_eligible():
+    """The regression this rule was rewritten for, measured live 2026-08-12.
+
+    A game 19 minutes from its scheduled start, no pitch thrown, zero outs and
+    zero runs, reported `abstractGameState: Live` with `codedGameState: P` and
+    `detailedState: Warmup`. Filtering on the abstract value dropped a full
+    lineup of eligible hitters in the last half hour before first pitch, which
+    is exactly the window the scheduled run covers.
+    """
+    assert has_started(_stated(19, "P"), _NOW) is False
+
+
 def test_has_started_keeps_a_delayed_game_eligible():
-    """Still "Preview" an hour past its scheduled first pitch: a rain delay.
+    """Still pre-game an hour past its scheduled first pitch: a rain delay.
 
     Its hitters have not batted, so they remain pickable. The clock alone would
     have thrown them out.
     """
-    assert has_started(_stated(-60, "Preview"), _NOW) is False
+    assert has_started(_stated(-60, "P"), _NOW) is False
 
 
 def test_has_started_falls_back_to_the_clock_without_a_state():
@@ -673,12 +688,23 @@ def test_has_started_falls_back_to_the_clock_without_a_state():
     assert has_started(_gr(0), _NOW) is False
 
 
+def test_has_started_falls_back_to_the_clock_on_an_unknown_code():
+    """An unrecognized code degrades to the previous behavior rather than being
+    sorted into whichever bucket a complement rule would default to."""
+    assert has_started(_stated(-1, "ZZ"), _NOW) is True
+    assert has_started(_stated(60, "ZZ"), _NOW) is False
+
+
+def test_pregame_and_started_codes_do_not_overlap():
+    assert not (main.PREGAME_GAME_CODES & main.STARTED_GAME_CODES)
+
+
 def test_select_games_excludes_games_already_underway():
     """The live slate shape: some finals, some in progress, some yet to start."""
-    final = _stated(-240, "Final")
-    live = _stated(-30, "Live")
-    delayed = _stated(-15, "Preview")
-    upcoming = _stated(60, "Preview")
+    final = _stated(-240, "F")
+    live = _stated(-30, "I")
+    delayed = _stated(-15, "P")
+    upcoming = _stated(60, "P")
 
     manual = select_games([final, live, delayed, upcoming], _NOW, scheduled=False)
     assert manual == [delayed, upcoming]
