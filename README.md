@@ -1056,6 +1056,42 @@ being written, each of which would otherwise have been reported as an empty samp
 **This measures coverage, not quality.** A calculator that resolves for every hitter may
 carry no predictive signal at all.
 
+### Recording a day's picks
+
+`scripts/record_daily_picks.py` snapshots the slate before first pitch, which is the first
+half of the forward test of the model against the heuristic (#35).
+
+```bash
+PYTHONPATH=. python3 scripts/record_daily_picks.py [--date YYYY-MM-DD] [--top-n N] [--force]
+PYTHONPATH=. python3 scripts/record_daily_picks.py --show     # re-render an existing snapshot
+```
+
+It writes two files per day, both under `data/picks/` and both tracked in git:
+
+| File | What it is |
+|------|-----------|
+| `YYYY-MM-DD.json` | The durable record. Every hitter evaluated, with both probabilities. The grader reads only this. |
+| `YYYY-MM-DD.txt` | The rendered table, both rankings side by side. What a person reads back later. |
+
+**Run it before first pitch.** Only games that have not begun are evaluated, so a hitter
+already batting is gone from the pool, and a run started late records a smaller slate. The
+script refuses to overwrite a snapshot with a smaller one unless given `--force`, and when it
+refuses it rewrites neither file.
+
+The eligibility test reads the schedule's own game state rather than comparing the clock
+against the scheduled start time. Those disagree in both directions: a rain-delayed game sits
+in "Preview" past its listed first pitch and its hitters are still pickable, while a resumed
+suspended game reports "Live" against a start time that may read as future.
+
+A missed day cannot be recovered. Re-running with a past `--date` finds no upcoming games,
+and even if it did, the season Statcast pull would already contain that day's results.
+
+Grading is a separate step once games are final:
+
+```bash
+PYTHONPATH=. python3 scripts/grade_daily_picks.py [--date YYYY-MM-DD] [--detail]
+```
+
 ### Output format
 
 ```

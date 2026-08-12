@@ -13,8 +13,10 @@ straightforwardly rewindable with an `end` bound, but Category 1's
 no date parameter at all, so part of the model cannot be rewound from the API.
 A forward test cannot leak, because the data does not exist yet.
 
-Writes one JSON record per day to `data/picks/YYYY-MM-DD.json`, holding every
-hitter evaluated with both probabilities. Grading is a separate step
+Writes two files per day: `data/picks/YYYY-MM-DD.json`, the durable record
+holding every hitter evaluated with both probabilities, and
+`data/picks/YYYY-MM-DD.txt`, the rendered table a person reads. The grader reads
+only the JSON. Grading is a separate step
 (`scripts/grade_daily_picks.py`) so a snapshot is never blocked on outcomes and
 the two halves fail independently.
 
@@ -25,9 +27,11 @@ so these accumulate in the repository rather than in a gitignored directory that
 a clean checkout or an ephemeral CI runner would discard.
 
 **Run before first pitch.** `select_games` filters to games that have not
-started, so a hitter whose game is underway is already gone from the pool. The
-script records the games it saw and refuses to overwrite a snapshot with a
-smaller one, since a later run in the same day sees strictly fewer games.
+started, reading the schedule's own game state rather than comparing against the
+scheduled start time, so a hitter whose game is underway is already gone from the
+pool and is never recorded as a pick he was ineligible for. The script records
+the games it saw and refuses to overwrite a snapshot with a smaller one, since a
+later run in the same day sees strictly fewer games.
 
 Usage::
 
@@ -135,6 +139,25 @@ def snapshot_path(date_str: str) -> Path:
     return PICKS_DIR / f"{date_str}.json"
 
 
+def rendered_path(date_str: str) -> Path:
+    """Path of the human-readable table for *date_str*.
+
+    Written beside the JSON rather than left to stdout: the rendered table is the
+    half a person actually reads back weeks later, and a run whose output only
+    ever existed in a terminal leaves no trace of what was shown that day.
+    """
+    return PICKS_DIR / f"{date_str}.txt"
+
+
+def write_rendered(date_str: str, snapshot: dict, top_n: int) -> tuple[str, Path]:
+    """Render *snapshot*, write it to the day's `.txt`, and return both."""
+    text = render_snapshot(snapshot, top_n=top_n)
+    path = rendered_path(date_str)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text + "\n")
+    return text, path
+
+
 def render_snapshot(snapshot: dict, top_n: int = 10) -> str:
     """Return the snapshot as a table.
 
@@ -218,7 +241,9 @@ def main_cli() -> None:
         if existing is None:
             print(f"No readable snapshot at {path}.")
             return
-        print(render_snapshot(existing, top_n=args.top_n))
+        text, txt_path = write_rendered(date_str, existing, args.top_n)
+        print(text)
+        print(f"\nWrote {txt_path}")
         return
 
     snapshot = build_snapshot(date_str, now)
@@ -237,11 +262,12 @@ def main_cli() -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(snapshot, indent=2, sort_keys=True))
+    text, txt_path = write_rendered(date_str, snapshot, args.top_n)
 
-    print(render_snapshot(snapshot, top_n=args.top_n))
+    print(text)
     modelled = sum(1 for p in snapshot["picks"] if p["prob_model"] is not None)
     print(
-        f"\nWrote {path}\n"
+        f"\nWrote {path}\nWrote {txt_path}\n"
         f"{len(snapshot['picks'])} hitters, {modelled} with a model value"
     )
 

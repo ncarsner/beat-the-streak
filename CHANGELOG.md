@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-08-12
+
+### Added
+- **`scripts/record_daily_picks.py` writes the rendered table to
+  `data/picks/YYYY-MM-DD.txt`** beside the JSON, instead of leaving it in stdout. The JSON
+  stays the durable record the grader reads; the text file is the half a person reads back
+  later. `--show` re-derives it from an existing snapshot without re-evaluating the slate, so
+  a day whose run only ever printed to a terminal can be given its table after the fact.
+  Both writes sit behind the same shrink guard: a run that finds fewer games than the
+  snapshot on disk overwrites neither file.
+
+### Fixed
+- **Games already underway were filtered by their scheduled start time rather than their
+  actual state**, so eligibility rested on a plan instead of an observation. `fetch_schedule`
+  now carries the schedule's `abstractGameState` and the new `main.has_started` reads it:
+  "Preview" means not yet begun, anything else means begun. This drops a resumed suspended
+  game whose start time still reads as future, and keeps a rain-delayed game whose hitters
+  have not batted and remain perfectly pickable. Records without the field fall back to the
+  clock, so nothing that predates it changes behavior.
+
+---
+
 ## 2026-08-10
 
 ### Added
