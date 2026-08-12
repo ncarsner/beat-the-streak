@@ -67,6 +67,30 @@ DEFAULT_COOLDOWN_DAYS = 7
 SLATE_TIMEZONE = ZoneInfo("America/New_York")
 
 
+def env_setting(name: str) -> str:
+    """Return environment variable *name* with surrounding whitespace removed.
+
+    Every credential and endpoint this module reads goes through here, because
+    CI manufactures two values that a plain `os.environ.get` reads as real
+    configuration:
+
+    1. An **unset** GitHub Actions secret interpolates to an empty string rather
+       than being absent, so the variable is present and a `get` default never
+       fires. This shipped: the first live scheduled run reported success and
+       sent nothing, because `SMTP_PORT` was unset, arrived as `""`, and
+       `int("")` raised into the skip path.
+    2. A secret set with `gh secret set X < file` or `echo v | gh secret set X`
+       carries the **trailing newline**. Nothing displays it, the value looks
+       right in every UI, and the provider rejects it as a bad credential.
+
+    Both are "not configured" wearing the costume of a configured value.
+    Stripping is deliberately surrounding-only: an interior space can be a
+    legitimate part of a passphrase, and silently deleting it would break a
+    working credential to fix a broken one.
+    """
+    return os.environ.get(name, "").strip()
+
+
 def slate_date(now: datetime | None = None) -> datetime:
     """Return *now* as a `SLATE_TIMEZONE` datetime, the day the slate belongs to.
 
@@ -911,10 +935,10 @@ def dispatch_scheduled_sms(
 ) -> None:
     """Send per-grouping SMS notifications. Only called in --scheduled mode."""
     grouped = group_picks_by_start_time(summary)
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    from_number = os.environ.get("TWILIO_FROM_NUMBER", "")
-    to_number = os.environ.get("SUBSCRIBER_PHONE_NUMBER", "")
+    account_sid = env_setting("TWILIO_ACCOUNT_SID")
+    auth_token = env_setting("TWILIO_AUTH_TOKEN")
+    from_number = env_setting("TWILIO_FROM_NUMBER")
+    to_number = env_setting("SUBSCRIBER_PHONE_NUMBER")
     if not all([account_sid, auth_token, from_number, to_number]):
         print(
             "SMS send skipped: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, "
@@ -1013,21 +1037,14 @@ def dispatch_scheduled_email(
     neither one's failure suppresses the other.
     """
     grouped = group_picks_by_start_time(summary)
-    smtp_host = os.environ.get("SMTP_HOST", "")
-    # Stripped, then `or`, rather than a `get` default: an unset GitHub Actions
-    # secret interpolates to an empty string rather than being absent from the
-    # environment, so the variable is present, the default never applies, and
-    # `int("")` raises. Observed live on the first scheduled run, which reported
-    # success while sending nothing. A blank value means "not configured" here,
-    # the same as an absent one, and a stray space in a pasted secret is the
-    # same mistake wearing a different hat.
-    smtp_port = (os.environ.get("SMTP_PORT") or "").strip() or "587"
-    username = os.environ.get("SMTP_USERNAME", "")
-    password = os.environ.get("SMTP_PASSWORD", "")
-    to_address = os.environ.get("SUBSCRIBER_EMAIL", "")
+    smtp_host = env_setting("SMTP_HOST")
+    smtp_port = env_setting("SMTP_PORT") or "587"
+    username = env_setting("SMTP_USERNAME")
+    password = env_setting("SMTP_PASSWORD")
+    to_address = env_setting("SUBSCRIBER_EMAIL")
     # From defaults to the authenticated user, which is what most providers
     # require anyway; a separate SMTP_FROM only matters for a distinct sender.
-    from_address = os.environ.get("SMTP_FROM", "") or username
+    from_address = env_setting("SMTP_FROM") or username
     if not all([smtp_host, username, password, to_address]):
         print(
             "Email send skipped: SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, "

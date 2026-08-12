@@ -560,6 +560,40 @@ def test_select_games_filters_multiple_games():
     assert len(scheduled) == 2  # 60 min and 90 min only; -60 and 200 excluded
 
 
+# ---- env_setting ----
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("smtp.gmail.com", "smtp.gmail.com"),
+        # The trailing newline `gh secret set X < file` stores. Invisible in
+        # every UI, rejected by the provider as a bad credential.
+        ("abcdefghijklmnop\n", "abcdefghijklmnop"),
+        ("  padded  ", "padded"),
+        ("", ""),
+        ("   ", ""),
+    ],
+    ids=["clean", "trailing-newline", "padded", "empty", "whitespace-only"],
+)
+def test_env_setting_strips_surrounding_whitespace(monkeypatch, raw, expected):
+    monkeypatch.setenv("SOME_SECRET", raw)
+    assert main.env_setting("SOME_SECRET") == expected
+
+
+def test_env_setting_absent_reads_as_empty(monkeypatch):
+    monkeypatch.delenv("SOME_SECRET", raising=False)
+    assert main.env_setting("SOME_SECRET") == ""
+
+
+def test_env_setting_keeps_interior_spaces():
+    """Surrounding only. An interior space can be a real part of a passphrase,
+    and deleting it would break a working credential to fix a broken one."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("SOME_SECRET", "  correct horse battery staple  ")
+        assert main.env_setting("SOME_SECRET") == "correct horse battery staple"
+
+
 # ---- slate_date ----
 
 
@@ -2298,6 +2332,29 @@ def test_dispatch_scheduled_email_non_numeric_port_skips_without_raising(monkeyp
         [_summary_entry("P1", 0.8, game_hour=19)], {}, "2026-08-10"
     )
     assert calls == []
+
+
+def test_dispatch_scheduled_email_strips_credential_whitespace(monkeypatch):
+    """A newline-terminated secret must authenticate as the value it looks like.
+
+    `gh secret set SMTP_PASSWORD < file` stores the trailing newline, nothing
+    displays it, and Gmail answers `535 Username and Password not accepted`,
+    which reads as a wrong password rather than a malformed one.
+    """
+    captured = {}
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setenv("SMTP_USERNAME", "user@example.com\n")
+    monkeypatch.setenv("SMTP_PASSWORD", "  abcdefghijklmnop\n")
+    monkeypatch.setattr(
+        main,
+        "send_email_notification",
+        lambda *a, **kw: captured.update(username=a[4], password=a[5]) or True,
+    )
+    dispatch_scheduled_email(
+        [_summary_entry("P1", 0.8, game_hour=19)], {}, "2026-08-10"
+    )
+    assert captured["username"] == "user@example.com"
+    assert captured["password"] == "abcdefghijklmnop"
 
 
 @pytest.mark.parametrize("port_value", ["", "   "], ids=["empty", "whitespace"])

@@ -47,8 +47,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **The first live scheduled run reported success and sent nothing.** `SMTP_PORT` is optional
   and not set as a repository secret, but an unset GitHub Actions secret interpolates to an
   empty string rather than being absent, so the variable was present, `os.environ.get`'s
-  `"587"` default never applied, and `int("")` raised into the skip path. The value is now
-  stripped and falls back on any blank, matching what `SMTP_FROM` already did one line below.
+  `"587"` default never applied, and `int("")` raised into the skip path.
+  Every credential and endpoint the notification paths read now goes through a new
+  `main.env_setting`, which strips surrounding whitespace. That covers the second way CI
+  manufactures a broken value: `gh secret set X < file` stores the **trailing newline**,
+  nothing displays it, and the provider answers with a bad-credential error that reads as a
+  wrong password rather than a malformed one. Stripping is surrounding-only, since an
+  interior space can be a legitimate part of a passphrase.
 
 ---
 
