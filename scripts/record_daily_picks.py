@@ -225,7 +225,9 @@ def main_cli() -> None:
     args = parser.parse_args()
 
     now = datetime.now(timezone.utc)
-    date_str = args.date or datetime.today().strftime("%Y-%m-%d")
+    # Same slate clock as a run, not the host's, so a snapshot taken during a
+    # late West Coast game lands in the file for the day those games belong to.
+    date_str = args.date or main.slate_date(now).strftime("%Y-%m-%d")
     path = snapshot_path(date_str)
 
     existing = None

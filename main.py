@@ -8,6 +8,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from prettytable import PrettyTable
 from time import sleep
+from zoneinfo import ZoneInfo
 import random
 
 from calculators.category_07_bullpen_exposure import (
@@ -47,6 +48,39 @@ SCHEDULE_ERROR_LOG_FILE = Path(__file__).parent / ".cache" / "schedule_fetch_err
 # game log won't have accumulated in less time than this. Overridable per
 # run via `--cooldown-days`.
 DEFAULT_COOLDOWN_DAYS = 7
+
+# The zone the slate date is resolved in, never the host clock.
+#
+# The MLB `date` parameter selects on `officialDate`, which is venue-local: a
+# game starting 01:50 UTC at T-Mobile Park carries the previous calendar day
+# (verified 2026-08-08). The scheduled runner is UTC, so between 00:00 and 03:00
+# UTC its own date is already tomorrow and every one of those firings requests a
+# slate that has not happened yet. Those firings exist precisely to cover late
+# West Coast starts, so they are the ones that must not be wrong, and the failure
+# is silent: `select_games` simply returns empty, which is also what a legitimate
+# quiet period looks like. It also splits the queried-games cache across the day
+# boundary, so the 23:45 firing's work is never reused by the 00:00 one.
+#
+# No single zone is correct for every venue, but Eastern is the one that makes
+# the boundary land in the right place: it is the latest US zone, so it rolls
+# over after every venue in the country has finished the day's games.
+SLATE_TIMEZONE = ZoneInfo("America/New_York")
+
+
+def slate_date(now: datetime | None = None) -> datetime:
+    """Return *now* as a `SLATE_TIMEZONE` datetime, the day the slate belongs to.
+
+    Every date a run derives, the `/schedule` query, the cache keys, the sent-cache
+    keys and the printed table title, has to come from this one clock. Mixing it
+    with the host's would let a cache be written under one date and read under
+    another on the same run.
+
+    *now* must be timezone-aware; a naive value cannot be converted without
+    assuming the host zone, which is the whole defect.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    return now.astimezone(SLATE_TIMEZONE)
 
 
 def load_no_data_cache(path=NO_DATA_CACHE_FILE):
@@ -778,7 +812,9 @@ def probable_hitters(summary_data, n=5):
     low_players = summary_data[-n:]
 
     table = PrettyTable()
-    today = datetime.today()
+    # Same clock as the slate that was queried, not the host's: a 00:30 UTC run
+    # would otherwise title tomorrow's date over tonight's games.
+    today = slate_date()
     table.title = f"{today.strftime('%B')} {today.day}, {today.year}"
     # `Model` and `Delta` sit next to `Prob %` deliberately: the two probabilities
     # are different answers to the same question and the point of showing both is
@@ -1015,8 +1051,8 @@ def dispatch_scheduled_email(
 
 def run(args: argparse.Namespace) -> None:
     """Execute one full run with the given parsed arguments."""
-    today = datetime.today().strftime("%Y-%m-%d")
     now = datetime.now(timezone.utc)
+    today = slate_date(now).strftime("%Y-%m-%d")
     games = fetch_schedule(today)
     selected = select_games(games, now, scheduled=args.scheduled)
 

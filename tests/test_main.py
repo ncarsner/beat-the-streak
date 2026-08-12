@@ -1,7 +1,7 @@
 import json
 import pytest
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import main
 from teams import TEAM_CROSSWALK, TEAM_ID_TO_ABBR
@@ -25,6 +25,7 @@ from main import (
     fetch_lineup,
     select_games,
     has_started,
+    slate_date,
     log_schedule_fetch_error,
     probable_hitters,
     group_picks_by_start_time,
@@ -557,6 +558,48 @@ def test_select_games_filters_multiple_games():
 
     scheduled = select_games(games, _NOW, scheduled=True)
     assert len(scheduled) == 2  # 60 min and 90 min only; -60 and 200 excluded
+
+
+# ---- slate_date ----
+
+
+@pytest.mark.parametrize(
+    "utc, expected",
+    [
+        # The three firings #49 is about. At 00:15 and 02:00 UTC the runner's own
+        # date is already the 13th, but the games in progress belong to the 12th.
+        (datetime(2026, 8, 13, 0, 15, tzinfo=timezone.utc), "2026-08-12"),
+        (datetime(2026, 8, 13, 2, 0, tzinfo=timezone.utc), "2026-08-12"),
+        (datetime(2026, 8, 12, 23, 45, tzinfo=timezone.utc), "2026-08-12"),
+        # Mid-afternoon Eastern: runner and slate agree, and always did.
+        (datetime(2026, 8, 12, 18, 0, tzinfo=timezone.utc), "2026-08-12"),
+        # 04:00 UTC is midnight Eastern, the first moment of the next slate.
+        (datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc), "2026-08-13"),
+    ],
+    ids=["00:15z", "02:00z", "23:45z", "18:00z", "04:00z-rollover"],
+)
+def test_slate_date_resolves_in_eastern_not_the_host_zone(utc, expected):
+    assert slate_date(utc).strftime("%Y-%m-%d") == expected
+
+
+def test_slate_date_survives_the_dst_offset_change():
+    """Eastern is -4 in August and -5 in January, and a fixed offset would put
+    the boundary an hour wrong for half the year. `zoneinfo` handles it."""
+    summer = datetime(2026, 8, 13, 3, 30, tzinfo=timezone.utc)
+    winter = datetime(2026, 1, 13, 3, 30, tzinfo=timezone.utc)
+    assert slate_date(summer).strftime("%Y-%m-%d") == "2026-08-12"
+    assert slate_date(winter).strftime("%Y-%m-%d") == "2026-01-12"
+
+
+def test_slate_date_defaults_to_now():
+    assert slate_date().tzinfo is not None
+
+
+def test_slate_date_converts_rather_than_relabels():
+    """A conversion moves the wall clock; a `replace` would keep 00:15 and call
+    it Eastern, which reads as the wrong day in the opposite direction."""
+    result = slate_date(datetime(2026, 8, 13, 0, 15, tzinfo=timezone.utc))
+    assert (result.hour, result.day) == (20, 12)
 
 
 # ---- has_started ----
