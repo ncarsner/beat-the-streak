@@ -2300,6 +2300,27 @@ def test_dispatch_scheduled_email_non_numeric_port_skips_without_raising(monkeyp
     assert calls == []
 
 
+@pytest.mark.parametrize("port_value", ["", "   "], ids=["empty", "whitespace"])
+def test_dispatch_scheduled_email_blank_port_falls_back_to_587(monkeypatch, port_value):
+    """An unset GitHub Actions secret interpolates to an empty string, so the
+    variable is present and a `get` default never fires. This shipped and the
+    first live scheduled run sent nothing: `int("")` raised and the channel
+    skipped itself with "SMTP_PORT is not a number ('')".
+    """
+    captured = {}
+    _set_smtp_env(monkeypatch)
+    monkeypatch.setenv("SMTP_PORT", port_value)
+    monkeypatch.setattr(
+        main,
+        "send_email_notification",
+        lambda *a, **kw: captured.update(port=a[3]) or True,
+    )
+    dispatch_scheduled_email(
+        [_summary_entry("P1", 0.8, game_hour=19)], {}, "2026-08-10"
+    )
+    assert captured["port"] == 587
+
+
 def test_dispatch_scheduled_email_from_defaults_to_the_username(monkeypatch):
     captured = {}
     _set_smtp_env(monkeypatch)

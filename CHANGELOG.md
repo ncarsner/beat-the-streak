@@ -44,6 +44,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **The workflow installed `requests` only, but `main.py` imports `prettytable` at module
   scope**, so every scheduled run would have died on `ImportError` before reaching any logic.
   Dependency installation moved to `uv` per RULES §1, with both packages named.
+- **The first live scheduled run reported success and sent nothing.** `SMTP_PORT` is optional
+  and not set as a repository secret, but an unset GitHub Actions secret interpolates to an
+  empty string rather than being absent, so the variable was present, `os.environ.get`'s
+  `"587"` default never applied, and `int("")` raised into the skip path. The value is now
+  stripped and falls back on any blank, matching what `SMTP_FROM` already did one line below.
 
 ---
 

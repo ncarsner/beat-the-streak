@@ -1014,7 +1014,14 @@ def dispatch_scheduled_email(
     """
     grouped = group_picks_by_start_time(summary)
     smtp_host = os.environ.get("SMTP_HOST", "")
-    smtp_port = os.environ.get("SMTP_PORT", "587")
+    # Stripped, then `or`, rather than a `get` default: an unset GitHub Actions
+    # secret interpolates to an empty string rather than being absent from the
+    # environment, so the variable is present, the default never applies, and
+    # `int("")` raises. Observed live on the first scheduled run, which reported
+    # success while sending nothing. A blank value means "not configured" here,
+    # the same as an absent one, and a stray space in a pasted secret is the
+    # same mistake wearing a different hat.
+    smtp_port = (os.environ.get("SMTP_PORT") or "").strip() or "587"
     username = os.environ.get("SMTP_USERNAME", "")
     password = os.environ.get("SMTP_PASSWORD", "")
     to_address = os.environ.get("SUBSCRIBER_EMAIL", "")
