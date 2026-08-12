@@ -108,17 +108,28 @@ grouping (keyed by `GameHourUTC`) that has qualifying players. Each message list
 | `TWILIO_FROM_NUMBER` | Sending phone number in E.164 format (e.g. `+15551234567`) |
 | `SUBSCRIBER_PHONE_NUMBER` | Recipient phone number in E.164 format |
 
-**GitHub Actions workflow** (`.github/workflows/sms-notify.yml`):
+**GitHub Actions workflow** (`.github/workflows/notify.yml`):
 
-The workflow runs `python3 main.py --scheduled` on a 15-minute cron (`*/15 14-23,0-2 * * *`),
-covering 10am–10pm EDT. The job is gated by the `SEASON_ACTIVE` repository variable — set it to
-any non-empty value in **Settings > Variables** to enable live runs; clear it during the
-off-season.
+The workflow runs `main.py --scheduled` on a 15-minute cron (`*/15 14-23,0-2 * * *`),
+covering 10am-10pm EDT. The cron is UTC with a fixed offset, not DST-aware, so the window
+shifts an hour relative to local time outside daylight saving.
 
-The four Twilio credentials must be added as repository secrets in
-**Settings > Secrets and variables > Actions**. The `.cache/` directory is persisted across
-same-day runs via `actions/cache` (keyed by date), so the SMS-sent cache survives between the
-15-minute firings.
+Two repository variables gate it, both in **Settings > Variables**:
+
+| Variable | Effect when non-empty |
+|---|---|
+| `SEASON_ACTIVE` | The job runs at all. Clear it during the off-season. |
+| `SMS_ACTIVE` | The Twilio credentials are passed to the run. Leave unset for email-only. |
+
+`SMS_ACTIVE` exists because the toll-free number's verification is still pending (#57), so
+an SMS send fails on every tick while email works fine. With it unset the workflow passes
+empty Twilio values, `dispatch_scheduled_sms` sees no credentials and skips itself, and the
+run is email-only. Setting it once Twilio approves needs no code change.
+
+Credentials go in **Settings > Secrets and variables > Actions**. The `.cache/` directory is
+persisted across same-day runs via `actions/cache`, keyed by the **Eastern** date rather than
+the runner's UTC one, so the firings after midnight UTC reuse the work the evening firings
+did on the same slate rather than starting from an empty cache.
 
 ### No-data cache and cooldown
 

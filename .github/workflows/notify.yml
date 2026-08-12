@@ -4,9 +4,11 @@ name: Notify
 # Gated by the SEASON_ACTIVE repository variable: set it to any non-empty value in
 # repo Settings > Variables to enable live runs. Clear it during the off-season.
 #
+# The cron is UTC and the offset is fixed, not DST-aware, so the window shifts by
+# an hour relative to local time outside daylight saving.
+#
 # Two independent notification channels. Each is skipped, with a message and
-# without failing the run, when its own credentials are absent, so email works
-# while the Twilio number is still pending Toll-Free Verification.
+# without failing the run, when its own credentials are absent.
 #
 # Email (active). Required repository secrets:
 #   SMTP_HOST
@@ -15,31 +17,32 @@ name: Notify
 #   SUBSCRIBER_EMAIL
 # Optional: SMTP_PORT (defaults to 587), SMTP_FROM (defaults to SMTP_USERNAME).
 #
-# SMS (pending). Required repository secrets:
+# SMS (held). Required repository secrets:
 #   TWILIO_ACCOUNT_SID
 #   TWILIO_AUTH_TOKEN
 #   TWILIO_FROM_NUMBER
 #   SUBSCRIBER_PHONE_NUMBER
 #
-# The `schedule:` trigger stays commented out until issue #49 is fixed: the slate
-# date comes from the runner clock, the runner is UTC, and the 0-2 UTC firings
-# therefore request tomorrow's games. A separate crash, fixed in 3d24fab, took
-# down every run that fetched a fresh lineup. Re-enable only after #49 lands and
-# a manual workflow_dispatch run is confirmed to deliver.
+# The Twilio secrets are set but the number's Toll-Free Verification is still
+# pending (#57), so an SMS send fails on every tick. Rather than hold the whole
+# workflow back for it, the SMS credentials are passed only when the SMS_ACTIVE
+# repository variable is non-empty. Leave it unset and the run is email-only:
+# `dispatch_scheduled_sms` sees no credentials and skips itself, which is the
+# path that already exists. Set it once Twilio approves, no code change needed.
 on:
   workflow_dispatch: {}
-  # schedule:
-  #   - cron: "*/15 14-23,0-2 * * *"
+  schedule:
+    - cron: "*/15 14-23,0-2 * * *"
 
 jobs:
   notify:
     if: vars.SEASON_ACTIVE != ''
     runs-on: ubuntu-latest
     env:
-      TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
-      TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
-      TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
-      SUBSCRIBER_PHONE_NUMBER: ${{ secrets.SUBSCRIBER_PHONE_NUMBER }}
+      TWILIO_ACCOUNT_SID: ${{ vars.SMS_ACTIVE != '' && secrets.TWILIO_ACCOUNT_SID || '' }}
+      TWILIO_AUTH_TOKEN: ${{ vars.SMS_ACTIVE != '' && secrets.TWILIO_AUTH_TOKEN || '' }}
+      TWILIO_FROM_NUMBER: ${{ vars.SMS_ACTIVE != '' && secrets.TWILIO_FROM_NUMBER || '' }}
+      SUBSCRIBER_PHONE_NUMBER: ${{ vars.SMS_ACTIVE != '' && secrets.SUBSCRIBER_PHONE_NUMBER || '' }}
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
@@ -50,17 +53,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: pip install requests
-
-      - name: Get current date
+      - name: Get the slate date
         id: date
-        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+        # Eastern, not the runner's UTC, and for the same reason `main.slate_date`
+        # exists: between 00:00 and 03:00 UTC the runner's own date is already
+        # tomorrow. A UTC key here would give those firings a fresh empty cache
+        # and never reuse the work the 23:45 firing did on the same slate.
+        run: echo "date=$(TZ=America/New_York date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Restore cache
         uses: actions/cache@v4
@@ -70,4 +74,7 @@ jobs:
           restore-keys: notify-cache-${{ runner.os }}-
 
       - name: Run scheduled notifications
-        run: python3 main.py --scheduled
+        # `prettytable` is imported at module scope in `main.py`, so a run without
+        # it dies on import before any logic runs. `--scheduled` implies
+        # `--no-model`, which is what keeps pybaseball out of this.
+        run: uv run --with requests --with prettytable python main.py --scheduled

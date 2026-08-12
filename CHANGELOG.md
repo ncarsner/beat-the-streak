@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## 2026-08-12
 
 ### Added
+- **The scheduled notification cron is live again, email-only.** `notify.yml`'s `schedule:`
+  trigger is uncommented. A new `SMS_ACTIVE` repository variable gates whether the Twilio
+  credentials reach the run: left unset, the workflow passes empty values, the existing
+  credential check in `dispatch_scheduled_sms` skips the channel, and the run emails without
+  waiting on the toll-free verification (#57). Set it once Twilio approves; no code change.
+  Per-`GameHourUTC` bucketing, top 5 per bucket and the per-bucket-per-day sent cache are
+  unchanged: they shipped on 2026-08-10 and had simply never fired.
 - **`scripts/record_daily_picks.py` writes the rendered table to
   `data/picks/YYYY-MM-DD.txt`** beside the JSON, instead of leaving it in stdout. The JSON
   stays the durable record the grader reads; the text file is the half a person reads back
@@ -24,6 +31,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   game whose start time still reads as future, and keeps a rain-delayed game whose hitters
   have not batted and remain perfectly pickable. Records without the field fall back to the
   clock, so nothing that predates it changes behavior.
+- **The slate date came from the host clock, so the after-midnight cron firings asked for the
+  wrong day** (#49). The MLB `date` parameter selects on `officialDate`, which is venue-local:
+  a game starting 01:50 UTC in Seattle belongs to the previous calendar day. The runner is
+  UTC, so the `0-2` firings requested a slate that had not happened. Those firings exist
+  precisely to cover late West Coast starts, and the failure was silent, since an empty
+  `select_games` is also what a legitimate quiet period looks like. New `main.slate_date`
+  resolves every date a run derives in `America/New_York` through stdlib `zoneinfo`: the
+  schedule query, the cache keys, the sent-cache keys and the printed table title. The
+  workflow's `actions/cache` key moved to the same clock, so the firings after midnight UTC
+  now reuse the evening's cache instead of starting empty.
+- **The workflow installed `requests` only, but `main.py` imports `prettytable` at module
+  scope**, so every scheduled run would have died on `ImportError` before reaching any logic.
+  Dependency installation moved to `uv` per RULES §1, with both packages named.
 
 ---
 
