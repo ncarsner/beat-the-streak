@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## 2026-08-12
 
+### Changed
+- **Both forward-test scripts run by bare path.** `scripts/record_daily_picks.py` and
+  `scripts/grade_daily_picks.py` now prepend the repo root to `sys.path`, matching what
+  `scripts/evaluate_sample_coverage.py` already did, so `python3 scripts/record_daily_picks.py`
+  no longer fails with `ModuleNotFoundError: No module named 'main'`. Running a file by path
+  puts its own directory on `sys.path`, not the repo root, and the `PYTHONPATH=.` prefix the
+  usage lines carried is exactly the kind of thing a cron entry or a copy-pasted command
+  silently omits. Documented invocations moved to `uv run python3 ...` per RULES §2.
+
 ### Added
 - **The scheduled notification cron is live again, email-only.** `notify.yml`'s `schedule:`
   trigger is uncommented. A new `SMS_ACTIVE` repository variable gates whether the Twilio

@@ -1051,7 +1051,7 @@ coverage measurement is taken against the same assembly that ships.
 for the `ROADMAP.md` sample batters and reports how many keys resolve.
 
 ```bash
-PYTHONPATH=. python3 scripts/evaluate_sample_coverage.py --date 2026-08-09
+uv run python3 scripts/evaluate_sample_coverage.py --date 2026-08-09
 ```
 
 On the 2026-08-09 slate, 10 of the 13 sample batters were posted, and of 1,080 keys
@@ -1073,8 +1073,8 @@ carry no predictive signal at all.
 half of the forward test of the model against the heuristic (#35).
 
 ```bash
-PYTHONPATH=. python3 scripts/record_daily_picks.py [--date YYYY-MM-DD] [--top-n N] [--force]
-PYTHONPATH=. python3 scripts/record_daily_picks.py --show     # re-render an existing snapshot
+uv run python3 scripts/record_daily_picks.py [--date YYYY-MM-DD] [--top-n N] [--force]
+uv run python3 scripts/record_daily_picks.py --show     # re-render an existing snapshot
 ```
 
 It writes two files per day, both under `data/picks/` and both tracked in git:
@@ -1100,7 +1100,7 @@ and even if it did, the season Statcast pull would already contain that day's re
 Grading is a separate step once games are final:
 
 ```bash
-PYTHONPATH=. python3 scripts/grade_daily_picks.py [--date YYYY-MM-DD] [--detail]
+uv run python3 scripts/grade_daily_picks.py [--date YYYY-MM-DD] [--detail]
 ```
 
 ### Output format

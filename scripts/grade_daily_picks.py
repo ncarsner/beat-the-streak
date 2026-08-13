@@ -35,18 +35,25 @@ partial day never enters the totals.
 
 Usage::
 
-    PYTHONPATH=. python3 scripts/grade_daily_picks.py [--date YYYY-MM-DD] [--top-n 5]
+    uv run python3 scripts/grade_daily_picks.py [--date YYYY-MM-DD] [--top-n 5]
 """
 
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 
 import requests
 from prettytable import PrettyTable
 
-from mlb_api import MLB_API_BASE
+# Running this file by path puts `scripts/` on `sys.path`, not the repo root, so
+# `import mlb_api` raises ModuleNotFoundError. Prepending the repo root makes a
+# bare `python3 scripts/grade_daily_picks.py` behave like `PYTHONPATH=. python3
+# ...`, which is what the usage line used to require.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from mlb_api import MLB_API_BASE  # noqa: E402 - must follow the bootstrap above
 
 PICKS_DIR = Path(__file__).resolve().parent.parent / "data" / "picks"
 

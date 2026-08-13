@@ -35,7 +35,7 @@ later run in the same day sees strictly fewer games.
 
 Usage::
 
-    PYTHONPATH=. python3 scripts/record_daily_picks.py [--date YYYY-MM-DD] [--force]
+    uv run python3 scripts/record_daily_picks.py [--date YYYY-MM-DD] [--force]
 
 Costs the same as a `--model` run: roughly two Statcast pulls per hitter, cached
 on disk, so re-running the same day is cheap.
@@ -43,12 +43,20 @@ on disk, so re-running the same day is cheap.
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from prettytable import PrettyTable
 
-import main
+# Running this file by path puts `scripts/` on `sys.path`, not the repo root, so
+# `import main` raises ModuleNotFoundError. Prepending the repo root makes a bare
+# `python3 scripts/record_daily_picks.py` behave like `PYTHONPATH=. python3 ...`,
+# which is what the usage line used to require and what a cron entry or a
+# copy-pasted command will silently get wrong.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import main  # noqa: E402 - must follow the sys.path bootstrap above
 
 PICKS_DIR = Path(__file__).resolve().parent.parent / "data" / "picks"
 
